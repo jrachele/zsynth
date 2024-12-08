@@ -91,12 +91,6 @@ fn _reset(_: *const clap.Plugin) callconv(.C) void {
     std.debug.print("Reset\n", .{});
 }
 
-// TODO: Turn these into parameters
-const attack_interval = 100; // milliseconds
-const decay_interval = 0; // milliseconds
-const sustain_amplitude = 1.0;
-const release_interval = 100; // frames, TODO use milliseconds
-
 const Voice = struct {
     noteId: i32,
     channel: i16,
@@ -106,7 +100,10 @@ const Voice = struct {
 
     pub fn is_ended(self: *const @This(), current_time: i64) bool {
         // TODO: Get the sample rate and convert the release interval to frames from milliseconds
-        return self.release_time + release_interval >= current_time;
+        if (self.release_time == std.math.minInt(i64)) {
+            return false;
+        }
+        return self.release_time + release_interval <= current_time;
     }
 };
 
@@ -241,6 +238,14 @@ fn clamp1(f: f64) f64 {
     return f;
 }
 
+// TODO: Turn these into parameters
+const attack_interval = 20000; // frames, TODO use milliseconds
+const decay_interval = 10000; // frames, TODO use milliseconds
+const release_interval = 20000; // frames, TODO use milliseconds
+
+const attack_amplitude = 1.0;
+const sustain_amplitude = 0.6;
+
 fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     var index = start;
     var time = current_time;
@@ -258,9 +263,24 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
             // Then we can tell where we are in the segment by passing in the current_time minus the start_time
             // And throwing that into sine
             const phase = (frequency / self.sample_rate.?) * @as(f64, @floatFromInt((time - voice.start_time)));
-            sum += std.math.sin(phase * 2.0 * 3.14159) * 0.6 * (1 / @as(f64, @floatFromInt(self.voices.items.len)));
+
+            // Here we want to process ADSR
+            const wave = std.math.sin(phase * 2.0 * 3.14159) * (1 / @as(f64, @floatFromInt(self.voices.items.len)));
+            const attack_percentage = clamp1(@as(f64, @floatFromInt(time - voice.start_time)) / attack_interval);
+            var release_percentage: f64 = 1;
+            if (voice.release_time > 0) {
+                release_percentage = 1 - clamp1(@as(f64, @floatFromInt(time - voice.release_time)) / release_interval);
+            }
+
+            const attack_finished = voice.start_time + attack_interval;
+            var sustain_percentage: f64 = 1;
+            if (decay_interval > 0) {
+                const decay_percentage = clamp1(@as(f64, @floatFromInt(time - attack_finished)) / decay_interval);
+                // Once we are completely decayed, we are at full sustain value. So the true amplitude percentage is
+                sustain_percentage = (attack_amplitude * (1 - decay_percentage)) + (sustain_amplitude * decay_percentage);
+            }
+            sum += wave * attack_percentage * release_percentage * sustain_percentage;
         }
-        // sum = clamp1(sum);
 
         output_left[index] = @floatCast(sum);
         output_right[index] = @floatCast(sum);
