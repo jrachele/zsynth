@@ -239,9 +239,9 @@ fn clamp1(f: f64) f64 {
 }
 
 // TODO: Turn these into parameters
-const attack_interval = 20000; // frames, TODO use milliseconds
-const decay_interval = 10000; // frames, TODO use milliseconds
-const release_interval = 20000; // frames, TODO use milliseconds
+const attack_interval = 2048; // frames, TODO use milliseconds
+const decay_interval = 256; // frames, TODO use milliseconds
+const release_interval = 2048; // frames, TODO use milliseconds
 
 const attack_amplitude = 1.0;
 const sustain_amplitude = 0.6;
@@ -255,17 +255,28 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
         var i: u32 = 0;
         while (i < self.voices.items.len) : (i += 1) {
             const voice = &self.voices.items[i];
+
             // Oscillations per second.
             const frequency = 440.0 * std.math.exp2((@as(f64, @floatFromInt(voice.key)) - 57.0) / 12.0);
+
+            // Offset the phase of this to match the previous voice
+            // if (i > 0 and voice.start_time == time) {
+            //     const previous_voice = &self.voices.items[i - 1];
+            //     const f0 = 440.0 * std.math.exp2((@as(f64, @floatFromInt(previous_voice.key)) - 57.0) / 12.0);
+            //     const p_wave = std.math.sin(f0 * 2.0 * 3.1419);
+            //     var p = ((std.math.asin(p_wave) / (2.0 * 3.1419)) * (self.sample_rate.? / frequency)) + @as(f64, @floatFromInt(voice.start_time - time));
+            //     p = @mod(p, (self.sample_rate.? / frequency));
+            //     voice.start_time += @intFromFloat(p);
+            // }
 
             // Where in the wave are we? 1 wavelength is 1 / frequency long
             // So we can divide that by the sample rate to get the number of wave segments per sample
             // Then we can tell where we are in the segment by passing in the current_time minus the start_time
             // And throwing that into sine
             const phase = (frequency / self.sample_rate.?) * @as(f64, @floatFromInt((time - voice.start_time)));
+            const wave = std.math.sin(phase * 2.0 * 3.14159);
 
             // Here we want to process ADSR
-            const wave = std.math.sin(phase * 2.0 * 3.14159) * (1 / @as(f64, @floatFromInt(self.voices.items.len)));
             const attack_percentage = clamp1(@as(f64, @floatFromInt(time - voice.start_time)) / attack_interval);
             var release_percentage: f64 = 1;
             if (voice.release_time > 0) {
