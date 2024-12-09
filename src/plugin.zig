@@ -2,13 +2,22 @@ const std = @import("std");
 const clap = @import("clap-bindings");
 
 const extensions = @import("extensions.zig");
+const Parameter = extensions.Parameters.Parameter;
 
 sample_rate: ?f64 = null,
 allocator: std.mem.Allocator,
 plugin: clap.Plugin,
 host: *const clap.Host,
 voices: std.ArrayList(Voice),
+params: std.ArrayList(Parameter),
 
+jobs: MainThreadJobs = .{},
+
+const MainThreadJobs = packed struct(u32) {
+    should_rescan_params: bool = false,
+    sync_params_to_host: bool = false,
+    _: u30 = 0,
+};
 pub const desc = clap.Plugin.Descriptor{
     .clap_version = clap.clap_version,
     .id = "com.juge.zig-audio-plugin",
@@ -29,7 +38,9 @@ pub fn fromPlugin(plugin: *const clap.Plugin) *@This() {
 pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
     const clap_demo = try allocator.create(@This());
     const voices = std.ArrayList(Voice).init(allocator);
+    const parameters = std.ArrayList(Parameter).init(allocator);
     errdefer voices.deinit();
+    errdefer parameters.deinit();
     errdefer allocator.destroy(clap_demo);
     clap_demo.* = .{
         .allocator = allocator,
@@ -49,19 +60,113 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         },
         .host = host,
         .voices = voices,
+        .params = parameters,
     };
 
     return &clap_demo.plugin;
 }
 
 // Plugin callbacks
-fn _init(_: *const clap.Plugin) callconv(.C) bool {
+fn _init(plugin: *const clap.Plugin) callconv(.C) bool {
+    var self = fromPlugin(plugin);
+    var params = self.params.addManyAsArray(5) catch {
+        return false;
+    };
+
+    params[Parameter.Attack] = Parameter{
+        .info = .{
+            .cookie = null,
+            .default_value = 200,
+            .min_value = 100,
+            .max_value = 20000,
+            .name = undefined,
+            .flags = .{
+                .is_stepped = true,
+                .is_automatable = true,
+            },
+            .id = @enumFromInt(Parameter.Attack),
+            .module = undefined,
+        },
+        .val = 200,
+    };
+    std.mem.copyForwards(u8, &params[Parameter.Attack].info.name, "Attack");
+    std.mem.copyForwards(u8, &params[Parameter.Attack].info.module, "Envelope/Attack");
+
+    params[Parameter.Decay] = Parameter{
+        .info = .{
+            .cookie = null,
+            .default_value = 200,
+            .min_value = 100,
+            .max_value = 20000,
+            .name = undefined,
+            .flags = .{
+                .is_stepped = true,
+                .is_automatable = true,
+            },
+            .id = @enumFromInt(Parameter.Decay),
+            .module = undefined,
+        },
+        .val = 200,
+    };
+    std.mem.copyForwards(u8, &params[Parameter.Decay].info.name, "Decay");
+    std.mem.copyForwards(u8, &params[Parameter.Decay].info.module, "Envelope/Decay");
+
+    params[Parameter.Sustain] = Parameter{ .info = .{
+        .cookie = null,
+        .default_value = 1.0,
+        .min_value = 0.0,
+        .max_value = 1.0,
+        .name = undefined,
+        .flags = .{
+            .is_automatable = true,
+        },
+        .id = @enumFromInt(Parameter.Sustain),
+        .module = undefined,
+    }, .val = 1.0 };
+    std.mem.copyForwards(u8, &params[Parameter.Sustain].info.name, "Sustain");
+    std.mem.copyForwards(u8, &params[Parameter.Sustain].info.module, "Envelope/Sustain");
+
+    params[Parameter.Release] = Parameter{ .info = .{
+        .cookie = null,
+        .default_value = 200,
+        .min_value = 100,
+        .max_value = 20000,
+        .name = undefined,
+        .flags = .{
+            .is_stepped = true,
+            .is_automatable = true,
+        },
+        .id = @enumFromInt(Parameter.Release),
+        .module = undefined,
+    }, .val = 200 };
+    std.mem.copyForwards(u8, &params[Parameter.Release].info.name, "Release");
+    std.mem.copyForwards(u8, &params[Parameter.Release].info.module, "Envelope/Release");
+
+    params[Parameter.BaseAmplitude] = Parameter{
+        .info = .{
+            .cookie = null,
+            .default_value = 1.0,
+            .min_value = 0.0,
+            .max_value = 1.0,
+            .name = undefined,
+            .flags = .{
+                .is_automatable = true,
+            },
+            .id = @enumFromInt(Parameter.BaseAmplitude),
+            .module = undefined,
+        },
+        .val = 1.0,
+    };
+    std.mem.copyForwards(u8, &params[Parameter.BaseAmplitude].info.name, "Base Ampltitude");
+    std.mem.copyForwards(u8, &params[Parameter.BaseAmplitude].info.module, "Oscillator/BaseAmp");
+
     return true;
 }
 
 fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
     var clap_demo = fromPlugin(plugin);
     clap_demo.voices.deinit();
+    clap_demo.params.deinit();
     clap_demo.allocator.destroy(clap_demo);
 }
 
@@ -71,15 +176,15 @@ fn _activate(
     _: u32,
     _: u32,
 ) callconv(.C) bool {
-    var clap_demo = fromPlugin(plugin);
-    clap_demo.sample_rate = sample_rate;
+    var self = fromPlugin(plugin);
+    self.sample_rate = sample_rate;
+
     return true;
 }
 
 fn _deactivate(_: *const clap.Plugin) callconv(.C) void {}
 
 fn _startProcessing(_: *const clap.Plugin) callconv(.C) bool {
-    std.debug.print("Start processing\n", .{});
     return true;
 }
 
@@ -87,8 +192,12 @@ fn _stopProcessing(_: *const clap.Plugin) callconv(.C) void {
     std.debug.print("Stop processing\n", .{});
 }
 
-fn _reset(_: *const clap.Plugin) callconv(.C) void {
+fn _reset(plugin: *const clap.Plugin) callconv(.C) void {
     std.debug.print("Reset\n", .{});
+    // Tell the host to rescan the parameters
+    var self = fromPlugin(plugin);
+    self.jobs.should_rescan_params = true;
+    self.host.requestCallback(self.host);
 }
 
 const Voice = struct {
@@ -98,11 +207,12 @@ const Voice = struct {
     start_time: i64,
     release_time: i64,
 
-    pub fn is_ended(self: *const @This(), current_time: i64) bool {
+    pub fn is_ended(self: *const @This(), current_time: i64, release_interval: i64) bool {
         // TODO: Get the sample rate and convert the release interval to frames from milliseconds
         if (self.release_time == std.math.minInt(i64)) {
             return false;
         }
+
         return self.release_time + release_interval <= current_time;
     }
 };
@@ -162,7 +272,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     var i: u32 = 0;
     while (i < self.voices.items.len) : (i += 1) {
         const voice = &self.voices.items[i];
-        if (voice.is_ended(clap_process.steady_time)) {
+        if (voice.is_ended(clap_process.steady_time, @intFromFloat(self.params.items[Parameter.Release].val))) {
             const note = clap.events.Note{
                 .header = .{
                     .size = @sizeOf(clap.events.Note),
@@ -196,39 +306,48 @@ fn process_event(self: *@This(), current_time: i64, event: *const clap.events.He
     if (event.space_id != clap.events.core_space_id) {
         return;
     }
-    if (!(event.type == .note_on or event.type == .note_off or event.type == .note_choke)) {
-        return;
-    }
+    switch (event.type) {
+        .note_on, .note_off, .note_choke => {
+            // We can cast the pointer as we now know that is the parent type
+            const note_event: *const clap.events.Note = @ptrCast(@alignCast(event));
+            if (event.type == .note_on) {
+                const voice = Voice{ .noteId = note_event.note_id, .channel = note_event.channel, .key = note_event.key, .start_time = current_time, .release_time = std.math.minInt(i64) };
 
-    // We can cast the pointer as we now know that is the parent type
-    const note_event: *const clap.events.Note = @ptrCast(@alignCast(event));
-    if (event.type == .note_on) {
-        const voice = Voice{ .noteId = note_event.note_id, .channel = note_event.channel, .key = note_event.key, .start_time = current_time, .release_time = std.math.minInt(i64) };
-
-        self.voices.append(voice) catch {
-            std.debug.print("Unable to append voice!", .{});
-            return;
-        };
-    } else {
-        var i: u32 = 0;
-        while (i < self.voices.items.len) : (i += 1) {
-            var voice = &self.voices.items[i];
-            if ((voice.channel == note_event.channel or note_event.channel == -1) and
-                (voice.key == note_event.key or note_event.key == -1) and
-                (voice.noteId == note_event.note_id or note_event.note_id == -1))
-            {
-                // if (voice.noteId == note_event.note_id) {
-                // Note choke would have the note be immediately removed
-                if (event.type == .note_choke) {
-                    _ = self.voices.orderedRemove(i);
-                    if (i > 0) {
-                        i -= 1;
+                self.voices.append(voice) catch {
+                    std.debug.print("Unable to append voice!", .{});
+                    return;
+                };
+            } else {
+                var i: u32 = 0;
+                while (i < self.voices.items.len) : (i += 1) {
+                    var voice = &self.voices.items[i];
+                    if ((voice.channel == note_event.channel or note_event.channel == -1) and
+                        (voice.key == note_event.key or note_event.key == -1) and
+                        (voice.noteId == note_event.note_id or note_event.note_id == -1))
+                    {
+                        // Note choke would have the note be immediately removed
+                        if (event.type == .note_choke) {
+                            _ = self.voices.orderedRemove(i);
+                            if (i > 0) {
+                                i -= 1;
+                            }
+                        } else {
+                            voice.release_time = current_time;
+                        }
                     }
-                } else {
-                    voice.release_time = current_time;
                 }
             }
-        }
+        },
+        .param_value => {
+            const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
+            const index = @intFromEnum(param_event.param_id);
+            if (index >= self.params.items.len) {
+                return;
+            }
+
+            self.params.items[index].val = param_event.value;
+        },
+        else => {},
     }
 }
 
@@ -238,17 +357,16 @@ fn clamp1(f: f64) f64 {
     return f;
 }
 
-// TODO: Turn these into parameters
-const attack_interval = 2048; // frames, TODO use milliseconds
-const decay_interval = 256; // frames, TODO use milliseconds
-const release_interval = 2048; // frames, TODO use milliseconds
-
-const attack_amplitude = 1.0;
-const sustain_amplitude = 0.6;
-
 fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     var index = start;
-    var time = current_time;
+    var time = @as(f64, @floatFromInt(current_time));
+
+    const attack_interval = self.params.items[Parameter.Attack].val;
+    const decay_interval = self.params.items[Parameter.Decay].val;
+    const release_interval = self.params.items[Parameter.Release].val;
+    const sustain_amplitude = self.params.items[Parameter.Sustain].val;
+    const attack_amplitude = self.params.items[Parameter.BaseAmplitude].val;
+
     while (index < end) : (index += 1) {
         var sum: f64 = 0;
         // Apply a sine wave for each voice, this could/should be done in a separate function
@@ -259,34 +377,27 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
             // Oscillations per second.
             const frequency = 440.0 * std.math.exp2((@as(f64, @floatFromInt(voice.key)) - 57.0) / 12.0);
 
-            // Offset the phase of this to match the previous voice
-            // if (i > 0 and voice.start_time == time) {
-            //     const previous_voice = &self.voices.items[i - 1];
-            //     const f0 = 440.0 * std.math.exp2((@as(f64, @floatFromInt(previous_voice.key)) - 57.0) / 12.0);
-            //     const p_wave = std.math.sin(f0 * 2.0 * 3.1419);
-            //     var p = ((std.math.asin(p_wave) / (2.0 * 3.1419)) * (self.sample_rate.? / frequency)) + @as(f64, @floatFromInt(voice.start_time - time));
-            //     p = @mod(p, (self.sample_rate.? / frequency));
-            //     voice.start_time += @intFromFloat(p);
-            // }
+            const start_time = @as(f64, @floatFromInt(voice.start_time));
+            const release_time = @as(f64, @floatFromInt(voice.release_time));
 
             // Where in the wave are we? 1 wavelength is 1 / frequency long
             // So we can divide that by the sample rate to get the number of wave segments per sample
             // Then we can tell where we are in the segment by passing in the current_time minus the start_time
             // And throwing that into sine
-            const phase = (frequency / self.sample_rate.?) * @as(f64, @floatFromInt((time - voice.start_time)));
+            const phase = (frequency / self.sample_rate.?) * (time - start_time);
             const wave = std.math.sin(phase * 2.0 * 3.14159);
 
             // Here we want to process ADSR
-            const attack_percentage = clamp1(@as(f64, @floatFromInt(time - voice.start_time)) / attack_interval);
+            const attack_percentage = clamp1((time - start_time) / attack_interval);
             var release_percentage: f64 = 1;
-            if (voice.release_time > 0) {
-                release_percentage = 1 - clamp1(@as(f64, @floatFromInt(time - voice.release_time)) / release_interval);
+            if (release_time > 0) {
+                release_percentage = 1 - clamp1((time - release_time) / release_interval);
             }
 
-            const attack_finished = voice.start_time + attack_interval;
+            const attack_finished = start_time + attack_interval;
             var sustain_percentage: f64 = 1;
             if (decay_interval > 0) {
-                const decay_percentage = clamp1(@as(f64, @floatFromInt(time - attack_finished)) / decay_interval);
+                const decay_percentage = clamp1((time - attack_finished) / decay_interval);
                 // Once we are completely decayed, we are at full sustain value. So the true amplitude percentage is
                 sustain_percentage = (attack_amplitude * (1 - decay_percentage)) + (sustain_amplitude * decay_percentage);
             }
@@ -305,8 +416,31 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.note_ports.id)) {
         return &extensions.note_ports;
     }
+    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.parameters.id)) {
+        return &extensions.params;
+    }
 
     return null;
 }
 
-fn _onMainThread(_: *const clap.Plugin) callconv(.C) void {}
+fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
+    const self = fromPlugin(plugin);
+    if (self.jobs.should_rescan_params) {
+        // Tell the host to rescan the parameters
+        const paramsHost = self.host.getExtension(self.host, clap.extensions.parameters.id);
+        if (paramsHost == null) {
+            std.debug.print("Could not get params host!\n", .{});
+        } else {
+            const p: *const clap.extensions.parameters.Host = @ptrCast(@alignCast(paramsHost.?));
+            std.debug.print("Clearing and rescanning all", .{});
+            var i: usize = 0;
+            while (i < self.params.items.len) : (i += 1) {
+                p.clear(self.host, @enumFromInt(i), .{ .all = true });
+            }
+            p.rescan(self.host, .{
+                .all = true,
+            });
+        }
+        self.jobs.should_rescan_params = false;
+    }
+}
