@@ -2,14 +2,15 @@ const std = @import("std");
 const clap = @import("clap-bindings");
 
 const extensions = @import("extensions.zig");
-const Parameter = extensions.Parameters.Parameter;
+const Parameters = @import("params.zig");
+const Parameter = Parameters.Parameter;
 
 sample_rate: ?f64 = null,
 allocator: std.mem.Allocator,
 plugin: clap.Plugin,
 host: *const clap.Host,
 voices: std.ArrayList(Voice),
-params: std.ArrayList(Parameter),
+params: Parameters.ParamValues,
 
 jobs: MainThreadJobs = .{},
 
@@ -38,9 +39,7 @@ pub fn fromPlugin(plugin: *const clap.Plugin) *@This() {
 pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
     const clap_demo = try allocator.create(@This());
     const voices = std.ArrayList(Voice).init(allocator);
-    const parameters = std.ArrayList(Parameter).init(allocator);
     errdefer voices.deinit();
-    errdefer parameters.deinit();
     errdefer allocator.destroy(clap_demo);
     clap_demo.* = .{
         .allocator = allocator,
@@ -60,114 +59,21 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         },
         .host = host,
         .voices = voices,
-        .params = parameters,
+        .params = Parameters.ParamValues.init(Parameters.param_defaults),
     };
 
     return &clap_demo.plugin;
 }
 
 // Plugin callbacks
-fn _init(plugin: *const clap.Plugin) callconv(.C) bool {
-    var self = fromPlugin(plugin);
-    var params = self.params.addManyAsArray(5) catch {
-        return false;
-    };
-
-    params[Parameter.Attack] = Parameter{
-        .info = .{
-            .cookie = null,
-            .default_value = 200,
-            .min_value = 100,
-            .max_value = 20000,
-            .name = undefined,
-            .flags = .{
-                .is_stepped = true,
-                .is_automatable = true,
-            },
-            .id = @enumFromInt(Parameter.Attack),
-            .module = undefined,
-        },
-        .val = 200,
-    };
-    std.mem.copyForwards(u8, &params[Parameter.Attack].info.name, "Attack");
-    std.mem.copyForwards(u8, &params[Parameter.Attack].info.module, "Envelope/Attack");
-
-    params[Parameter.Decay] = Parameter{
-        .info = .{
-            .cookie = null,
-            .default_value = 200,
-            .min_value = 100,
-            .max_value = 20000,
-            .name = undefined,
-            .flags = .{
-                .is_stepped = true,
-                .is_automatable = true,
-            },
-            .id = @enumFromInt(Parameter.Decay),
-            .module = undefined,
-        },
-        .val = 200,
-    };
-    std.mem.copyForwards(u8, &params[Parameter.Decay].info.name, "Decay");
-    std.mem.copyForwards(u8, &params[Parameter.Decay].info.module, "Envelope/Decay");
-
-    params[Parameter.Sustain] = Parameter{ .info = .{
-        .cookie = null,
-        .default_value = 1.0,
-        .min_value = 0.0,
-        .max_value = 1.0,
-        .name = undefined,
-        .flags = .{
-            .is_automatable = true,
-        },
-        .id = @enumFromInt(Parameter.Sustain),
-        .module = undefined,
-    }, .val = 1.0 };
-    std.mem.copyForwards(u8, &params[Parameter.Sustain].info.name, "Sustain");
-    std.mem.copyForwards(u8, &params[Parameter.Sustain].info.module, "Envelope/Sustain");
-
-    params[Parameter.Release] = Parameter{ .info = .{
-        .cookie = null,
-        .default_value = 200,
-        .min_value = 100,
-        .max_value = 20000,
-        .name = undefined,
-        .flags = .{
-            .is_stepped = true,
-            .is_automatable = true,
-        },
-        .id = @enumFromInt(Parameter.Release),
-        .module = undefined,
-    }, .val = 200 };
-    std.mem.copyForwards(u8, &params[Parameter.Release].info.name, "Release");
-    std.mem.copyForwards(u8, &params[Parameter.Release].info.module, "Envelope/Release");
-
-    params[Parameter.BaseAmplitude] = Parameter{
-        .info = .{
-            .cookie = null,
-            .default_value = 1.0,
-            .min_value = 0.0,
-            .max_value = 1.0,
-            .name = undefined,
-            .flags = .{
-                .is_automatable = true,
-            },
-            .id = @enumFromInt(Parameter.BaseAmplitude),
-            .module = undefined,
-        },
-        .val = 1.0,
-    };
-    std.mem.copyForwards(u8, &params[Parameter.BaseAmplitude].info.name, "Base Ampltitude");
-    std.mem.copyForwards(u8, &params[Parameter.BaseAmplitude].info.module, "Oscillator/BaseAmp");
-
+fn _init(_: *const clap.Plugin) callconv(.C) bool {
     return true;
 }
 
 fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
-    var clap_demo = fromPlugin(plugin);
-    clap_demo.voices.deinit();
-    clap_demo.params.deinit();
-    clap_demo.allocator.destroy(clap_demo);
+    var self = fromPlugin(plugin);
+    self.voices.deinit();
+    self.allocator.destroy(self);
 }
 
 fn _activate(
@@ -272,7 +178,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     var i: u32 = 0;
     while (i < self.voices.items.len) : (i += 1) {
         const voice = &self.voices.items[i];
-        if (voice.is_ended(clap_process.steady_time, @intFromFloat(self.params.items[Parameter.Release].val))) {
+        if (voice.is_ended(clap_process.steady_time, @intFromFloat(self.params.get(Parameters.Parameter.Release)))) {
             const note = clap.events.Note{
                 .header = .{
                     .size = @sizeOf(clap.events.Note),
@@ -341,11 +247,11 @@ fn process_event(self: *@This(), current_time: i64, event: *const clap.events.He
         .param_value => {
             const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
             const index = @intFromEnum(param_event.param_id);
-            if (index >= self.params.items.len) {
+            if (index >= Parameters.param_count) {
                 return;
             }
 
-            self.params.items[index].val = param_event.value;
+            self.params.set(@enumFromInt(index), param_event.value);
         },
         else => {},
     }
@@ -361,11 +267,11 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
     var index = start;
     var time = @as(f64, @floatFromInt(current_time));
 
-    const attack_interval = self.params.items[Parameter.Attack].val;
-    const decay_interval = self.params.items[Parameter.Decay].val;
-    const release_interval = self.params.items[Parameter.Release].val;
-    const sustain_amplitude = self.params.items[Parameter.Sustain].val;
-    const attack_amplitude = self.params.items[Parameter.BaseAmplitude].val;
+    const attack_interval = self.params.get(Parameter.Attack);
+    const decay_interval = self.params.get(Parameter.Decay);
+    const release_interval = self.params.get(Parameter.Release);
+    const sustain_amplitude = self.params.get(Parameter.Sustain);
+    const attack_amplitude = self.params.get(Parameter.BaseAmplitude);
 
     while (index < end) : (index += 1) {
         var sum: f64 = 0;
@@ -434,7 +340,7 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
             const p: *const clap.extensions.parameters.Host = @ptrCast(@alignCast(paramsHost.?));
             std.debug.print("Clearing and rescanning all", .{});
             var i: usize = 0;
-            while (i < self.params.items.len) : (i += 1) {
+            while (i < Parameters.param_count) : (i += 1) {
                 p.clear(self.host, @enumFromInt(i), .{ .all = true });
             }
             p.rescan(self.host, .{
