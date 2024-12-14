@@ -1,15 +1,21 @@
 const std = @import("std");
 const Step = std.Build.Step;
 
+const gui_supported = false;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const clap_bindings = b.dependency("clap-bindings", .{});
     const regex = b.dependency("regex", .{});
+    const dvui = b.dependency("dvui", .{});
     const exe = b.addSharedLibrary(.{ .name = "zsynth", .target = target, .optimize = std.builtin.OptimizeMode.Debug, .root_source_file = .{ .cwd_relative = "src/main.zig" } });
 
     // Add CLAP headers
     exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
     exe.root_module.addImport("regex", regex.module("regex"));
+    if (gui_supported) {
+        exe.root_module.addImport("dvui", dvui.module("dvui_sdl"));
+    }
 
     const rename_dll_step = CreateClapPluginStep.create(b, exe);
     rename_dll_step.step.dependOn(&b.addInstallArtifact(exe, .{}).step);
