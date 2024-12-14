@@ -288,9 +288,24 @@ fn textToValue(
     return true;
 }
 
-// Ignoring this as this is how to read/modify parameter changes without processing audio
+// Handle parameter changes
 fn flush(
-    _: *const clap.Plugin,
-    _: *const clap.events.InputEvents,
+    plugin: *const clap.Plugin,
+    events: *const clap.events.InputEvents,
     _: *const clap.events.OutputEvents,
-) callconv(.C) void {}
+) callconv(.C) void {
+    const self = MyPlugin.fromPlugin(plugin);
+    var i: u32 = 0;
+    while (i < events.size(events)) : (i += 1) {
+        const event = events.get(events, i);
+        if (event.type == .param_value) {
+            const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
+            const index = @intFromEnum(param_event.param_id);
+            if (index >= param_count) {
+                return;
+            }
+
+            self.params.set(@enumFromInt(index), param_event.value);
+        }
+    }
+}

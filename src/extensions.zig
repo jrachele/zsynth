@@ -1,6 +1,7 @@
 const std = @import("std");
 const clap = @import("clap-bindings");
 const Parameters = @import("params.zig");
+const GUI = @import("gui.zig");
 
 const MyPlugin = @import("plugin.zig");
 
@@ -9,6 +10,7 @@ pub const audio_ports = AudioPorts.create();
 pub const note_ports = NotePorts.create();
 pub const params = Parameters.create();
 pub const state = State.create();
+pub const gui = GUI.create();
 
 // Audio Ports Extension
 const AudioPorts = struct {

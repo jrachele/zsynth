@@ -135,6 +135,9 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     // The number of events corresponds to how many are expected to occur within my 256 frame range
     const event_count = clap_process.in_events.size(clap_process.in_events);
 
+    // Process parameter event changes
+    extensions.params.flush(plugin, clap_process.in_events, clap_process.out_events);
+
     var event_index: u32 = 0;
     var current_frame: u32 = 0;
 
@@ -157,7 +160,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 
             // Process the event if it matches the current frame
             if (event.sample_offset == current_frame) {
-                self.process_event(clap_process.steady_time + current_frame, event);
+                self.process_note_changes(clap_process.steady_time + current_frame, event);
                 event_index += 1;
             }
         }
@@ -210,7 +213,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 }
 
 // Processing logic
-fn process_event(self: *@This(), current_time: i64, event: *const clap.events.Header) void {
+fn process_note_changes(self: *@This(), current_time: i64, event: *const clap.events.Header) void {
     if (event.space_id != clap.events.core_space_id) {
         return;
     }
@@ -245,15 +248,6 @@ fn process_event(self: *@This(), current_time: i64, event: *const clap.events.He
                     }
                 }
             }
-        },
-        .param_value => {
-            const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
-            const index = @intFromEnum(param_event.param_id);
-            if (index >= Parameters.param_count) {
-                return;
-            }
-
-            self.params.set(@enumFromInt(index), param_event.value);
         },
         else => {},
     }
@@ -372,9 +366,11 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.parameters.id)) {
         return &extensions.params;
     }
-
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.state.id)) {
         return &extensions.state;
+    }
+    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.gui.id)) {
+        return &extensions.gui;
     }
 
     return null;
