@@ -3,7 +3,9 @@ const clap = @import("clap-bindings");
 
 const extensions = @import("extensions.zig");
 const Parameters = @import("params.zig");
+
 const Parameter = Parameters.Parameter;
+const Wave = Parameters.Wave;
 
 sample_rate: ?f64 = null,
 allocator: std.mem.Allocator,
@@ -19,16 +21,17 @@ const MainThreadJobs = packed struct(u32) {
     sync_params_to_host: bool = false,
     _: u30 = 0,
 };
+
 pub const desc = clap.Plugin.Descriptor{
     .clap_version = clap.clap_version,
-    .id = "com.juge.zig-audio-plugin",
-    .name = "Zig Audio Plugin",
+    .id = "com.juge.zsynth",
+    .name = "ZSynth",
     .vendor = "juge",
     .url = "",
     .manual_url = "",
     .support_url = "",
-    .version = "1.0.0",
-    .description = "Test CLAP Plugin written in Zig",
+    .version = "0.0.1",
+    .description = "Basic Synthesizer CLAP Plugin",
     .features = &.{ clap.Plugin.features.stereo, clap.Plugin.features.synthesizer, clap.Plugin.features.instrument },
 };
 
@@ -113,12 +116,10 @@ const Voice = struct {
     start_time: i64,
     release_time: i64,
 
-    pub fn is_ended(self: *const @This(), current_time: i64, release_interval: i64) bool {
-        // TODO: Get the sample rate and convert the release interval to frames from milliseconds
-        if (self.release_time == std.math.minInt(i64)) {
-            return false;
-        }
-
+    pub fn is_ended(self: *const @This(), current_time: i64, release_interval_ms: f64, sample_rate: f64) bool {
+        const release_interval: i64 = @intFromFloat(to_frames(release_interval_ms, sample_rate));
+        // _ = sample_rate;
+        // const release_interval: i64 = @intFromFloat(release_interval_ms);
         return self.release_time + release_interval <= current_time;
     }
 };
@@ -178,7 +179,8 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     var i: u32 = 0;
     while (i < self.voices.items.len) : (i += 1) {
         const voice = &self.voices.items[i];
-        if (voice.is_ended(clap_process.steady_time, @intFromFloat(self.params.get(Parameters.Parameter.Release)))) {
+        const release_interval = self.params.get(Parameters.Parameter.Release);
+        if (voice.release_time > 0 and voice.is_ended(clap_process.steady_time, release_interval, self.sample_rate.?)) {
             const note = clap.events.Note{
                 .header = .{
                     .size = @sizeOf(clap.events.Note),
@@ -263,15 +265,39 @@ fn clamp1(f: f64) f64 {
     return f;
 }
 
+fn to_frames(ms: f64, sample_rate: f64) f64 {
+    const seconds = ms / 1000;
+    return std.math.floor(sample_rate * seconds);
+}
+
+fn min(a: f64, b: f64) f64 {
+    if (a <= b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
 fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     var index = start;
     var time = @as(f64, @floatFromInt(current_time));
 
-    const attack_interval = self.params.get(Parameter.Attack);
-    const decay_interval = self.params.get(Parameter.Decay);
-    const release_interval = self.params.get(Parameter.Release);
+    const attack_interval_ms = self.params.get(Parameter.Attack);
+    const decay_interval_ms = self.params.get(Parameter.Decay);
+    const release_interval_ms = self.params.get(Parameter.Release);
+
+    const attack_interval = to_frames(attack_interval_ms, self.sample_rate.?);
+    const decay_interval = to_frames(decay_interval_ms, self.sample_rate.?);
+    const release_interval = to_frames(release_interval_ms, self.sample_rate.?);
+    // const attack_interval = attack_interval_ms;
+    // const decay_interval = decay_interval_ms;
+    // const release_interval = release_interval_ms;
+
     const sustain_amplitude = self.params.get(Parameter.Sustain);
     const attack_amplitude = self.params.get(Parameter.BaseAmplitude);
+
+    const waveValue: u32 = @intFromFloat(self.params.get(Parameter.Wave));
+    const waveType: Wave = @enumFromInt(waveValue);
 
     while (index < end) : (index += 1) {
         var sum: f64 = 0;
@@ -291,16 +317,37 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
             // Then we can tell where we are in the segment by passing in the current_time minus the start_time
             // And throwing that into sine
             const phase = (frequency / self.sample_rate.?) * (time - start_time);
-            const wave = std.math.sin(phase * 2.0 * 3.14159);
+            const phaseValue = phase - std.math.floor(phase);
+            var wave: f64 = 0;
+            switch (waveType) {
+                Wave.Sine => {
+                    wave = std.math.sin(phase * 2.0 * 3.14159);
+                },
+                Wave.HalfSine => {
+                    wave = clamp1(std.math.sin(phase * 2.0 * 3.14159));
+                },
+                Wave.Saw => {
+                    wave = (phaseValue * 2) - 1;
+                },
+                Wave.Triangle => {
+                    if (phaseValue < 0.5) {
+                        wave = phaseValue * 2;
+                    } else {
+                        wave = (1 - phaseValue) * 2;
+                    }
+                    wave = (wave * 2) - 1;
+                },
+            }
 
             // Here we want to process ADSR
             const attack_percentage = clamp1((time - start_time) / attack_interval);
             var release_percentage: f64 = 1;
+            var attack_finished = start_time + attack_interval;
             if (release_time > 0) {
                 release_percentage = 1 - clamp1((time - release_time) / release_interval);
+                attack_finished = min(attack_finished, release_time);
             }
 
-            const attack_finished = start_time + attack_interval;
             var sustain_percentage: f64 = 1;
             if (decay_interval > 0) {
                 const decay_percentage = clamp1((time - attack_finished) / decay_interval);
@@ -324,6 +371,10 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.parameters.id)) {
         return &extensions.params;
+    }
+
+    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.state.id)) {
+        return &extensions.state;
     }
 
     return null;

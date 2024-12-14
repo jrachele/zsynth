@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleExecutable</key>
-    <string>Zig Audio Plugin</string>
+    <string>ZSynth</string>
     <key>CFBundleGetInfoString</key>
     <string></string>
     <key>CFBundleIdentifier</key>
     <string></string>
     <key>CFBundleName</key>
-    <string>Zig Audio Plugin</string>
+    <string>ZSynth</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleSignature</key>

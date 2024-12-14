@@ -1,6 +1,6 @@
 const std = @import("std");
-
 const clap = @import("clap-bindings");
+const regex = @import("regex");
 const MyPlugin = @import("plugin.zig");
 
 const Info = clap.extensions.parameters.Info;
@@ -11,16 +11,25 @@ pub const Parameter = enum {
     Sustain,
     Release,
     BaseAmplitude,
+    Wave,
+};
+
+pub const Wave = enum(u32) {
+    Sine = 1,
+    HalfSine = 2,
+    Saw = 3,
+    Triangle = 4,
 };
 
 pub const ParamValues = std.EnumArray(Parameter, f64);
 
 pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
-    .Attack = 200.0,
-    .Decay = 200.0,
+    .Attack = 5.0,
+    .Decay = 5.0,
     .Sustain = 0.5,
     .Release = 200.0,
     .BaseAmplitude = 0.5,
+    .Wave = @intFromEnum(Wave.Sine),
 };
 
 pub const param_count = std.meta.fields(Parameter).len;
@@ -50,8 +59,8 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
         Parameter.Attack => {
             info.* = .{
                 .cookie = null,
-                .default_value = 200,
-                .min_value = 100,
+                .default_value = param_defaults.Attack,
+                .min_value = 0,
                 .max_value = 20000,
                 .name = undefined,
                 .flags = .{
@@ -67,8 +76,8 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
         Parameter.Decay => {
             info.* = .{
                 .cookie = null,
-                .default_value = 200,
-                .min_value = 100,
+                .default_value = param_defaults.Decay,
+                .min_value = 0,
                 .max_value = 20000,
                 .name = undefined,
                 .flags = .{
@@ -84,7 +93,7 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
         Parameter.Sustain => {
             info.* = .{
                 .cookie = null,
-                .default_value = 1.0,
+                .default_value = param_defaults.Sustain,
                 .min_value = 0.0,
                 .max_value = 1.0,
                 .name = undefined,
@@ -100,8 +109,8 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
         Parameter.Release => {
             info.* = .{
                 .cookie = null,
-                .default_value = 200,
-                .min_value = 100,
+                .default_value = param_defaults.Release,
+                .min_value = 0,
                 .max_value = 20000,
                 .name = undefined,
                 .flags = .{
@@ -117,7 +126,7 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
         Parameter.BaseAmplitude => {
             info.* = .{
                 .cookie = null,
-                .default_value = 1.0,
+                .default_value = param_defaults.BaseAmplitude,
                 .min_value = 0.0,
                 .max_value = 1.0,
                 .name = undefined,
@@ -129,6 +138,23 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
             };
             std.mem.copyForwards(u8, &info.name, "Base Ampltitude");
             std.mem.copyForwards(u8, &info.module, "Oscillator/BaseAmp");
+        },
+        Parameter.Wave => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.Wave,
+                .min_value = @intFromEnum(Wave.Sine),
+                .max_value = std.meta.fields(Wave).len,
+                .name = undefined,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.Wave)),
+                .module = undefined,
+            };
+            std.mem.copyForwards(u8, &info.name, "Wave");
+            std.mem.copyForwards(u8, &info.module, "Oscillator/Wave");
         },
     }
 
@@ -153,32 +179,85 @@ fn valueToText(
     out_buffer: [*]u8,
     out_buffer_capacity: u32,
 ) callconv(.C) bool {
-    const index: usize = @intFromEnum(id);
     const out_buf = out_buffer[0..out_buffer_capacity];
 
+    const index: usize = @intFromEnum(id);
     const param_type: Parameter = @enumFromInt(index);
     switch (param_type) {
         Parameter.Attack, Parameter.Decay, Parameter.Release => {
-            _ = std.fmt.bufPrint(out_buf, "{d} frames", .{std.math.floor(value)}) catch return false;
+            if (value >= 1000) {
+                _ = std.fmt.bufPrint(out_buf, "{d:.3} s", .{value / 1000}) catch return false;
+            } else {
+                _ = std.fmt.bufPrint(out_buf, "{d:.0} ms", .{value}) catch return false;
+            }
         },
         Parameter.Sustain, Parameter.BaseAmplitude => {
             _ = std.fmt.bufPrint(out_buf, "{d:.2}%", .{value * 100}) catch return false;
+        },
+        Parameter.Wave => {
+            const intValue: u32 = @intFromFloat(value);
+            const wave: Wave = @enumFromInt(intValue);
+            _ = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
     }
     return true;
 }
 
 fn textToValue(
-    _: *const clap.Plugin,
-    _: clap.Id,
+    plugin: *const clap.Plugin,
+    id: clap.Id,
     value_text: [*:0]const u8,
     out_value: *f64,
 ) callconv(.C) bool {
+    const self = MyPlugin.fromPlugin(plugin);
+    const index: usize = @intFromEnum(id);
+    const param_type: Parameter = @enumFromInt(index);
     const value = std.mem.span(value_text);
-    const val_float = std.fmt.parseFloat(f64, value) catch return false;
-    out_value.* = val_float;
 
-    // TODO Actually parse stuff
+    if (param_type == Parameter.Wave) {
+        return false;
+    }
+
+    var unitString: [64]u8 = undefined;
+    var valFloat: f64 = 0;
+    const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%)?\\s*";
+    var re = regex.Regex.compile(self.allocator, pattern) catch return false;
+    defer re.deinit();
+    var caps = re.captures(value) catch return false;
+    if (caps == null) return false;
+    defer caps.?.deinit();
+    const valueString = caps.?.sliceAt(1).?;
+    var unitSlice: ?[]const u8 = null;
+    if (caps.?.len() == 3) {
+        unitSlice = caps.?.sliceAt(2);
+    }
+    if (unitSlice != null) {
+        std.mem.copyForwards(u8, &unitString, unitSlice.?);
+    }
+
+    valFloat = std.fmt.parseFloat(f64, valueString) catch return false;
+
+    switch (param_type) {
+        Parameter.Attack, Parameter.Decay, Parameter.Release => {
+            if (std.mem.startsWith(u8, &unitString, "S") or std.mem.startsWith(u8, &unitString, "s") or std.mem.startsWith(u8, &unitString, "seconds")) {
+                out_value.* = valFloat * 1000;
+            } else if (unitSlice == null or std.mem.startsWith(u8, &unitString, "MS") or std.mem.startsWith(u8, &unitString, "Ms") or std.mem.startsWith(u8, &unitString, "ms") or std.mem.startsWith(u8, &unitString, "millis") or std.mem.startsWith(u8, &unitString, "milliseconds")) {
+                out_value.* = valFloat;
+            } else {
+                return false;
+            }
+        },
+        Parameter.Sustain, Parameter.BaseAmplitude => {
+            if (std.mem.startsWith(u8, &unitString, "%")) {
+                out_value.* = valFloat / 100;
+            } else {
+                out_value.* = valFloat;
+            }
+        },
+        Parameter.Wave => {
+            return false;
+        },
+    }
     return true;
 }
 

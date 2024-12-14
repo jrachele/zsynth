@@ -2,10 +2,13 @@ const std = @import("std");
 const clap = @import("clap-bindings");
 const Parameters = @import("params.zig");
 
+const MyPlugin = @import("plugin.zig");
+
 // Extensions
 pub const audio_ports = AudioPorts.create();
 pub const note_ports = NotePorts.create();
 pub const params = Parameters.create();
+pub const state = State.create();
 
 // Audio Ports Extension
 const AudioPorts = struct {
@@ -25,21 +28,6 @@ const AudioPorts = struct {
         var nameBuf: [clap.name_capacity]u8 = undefined;
         if (is_input) {
             return false;
-            // const name = std.fmt.bufPrint(&nameBuf, "Audio Input {}", .{index}) catch {
-            //     return false;
-            // };
-            // std.mem.copyForwards(u8, &info.name, name);
-
-            // std.debug.print("{s}", .{name});
-
-            // info.id = @enumFromInt(index);
-            // info.channel_count = 1;
-            // info.flags = .{
-            //     .is_main = true,
-            //     .supports_64bits = false,
-            // };
-            // info.port_type = "mono";
-            // info.in_place_pair = .invalid_id;
         } else {
             const name = std.fmt.bufPrint(&nameBuf, "Audio Output {}", .{index}) catch {
                 return false;
@@ -91,6 +79,38 @@ const NotePorts = struct {
         };
 
         info.preferred_dialect = .clap;
+        return true;
+    }
+};
+
+const State = struct {
+    fn create() clap.extensions.state.Plugin {
+        return .{
+            .save = save,
+            .load = load,
+        };
+    }
+
+    // Frankly shocking how nice Zig makes this
+    fn save(plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
+        const self = MyPlugin.fromPlugin(plugin);
+        const str = std.json.stringifyAlloc(self.allocator, self.params, .{}) catch return false;
+        defer self.allocator.free(str);
+
+        return stream.write(stream, str.ptr, str.len) == str.len;
+    }
+
+    fn load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
+        const self = MyPlugin.fromPlugin(plugin);
+        const MAX_BUF_SIZE = 1024; // this is entirely arbitrary.
+        var buf: [MAX_BUF_SIZE]u8 = undefined;
+        const bytesRead = stream.read(stream, &buf, MAX_BUF_SIZE);
+        if (bytesRead < 0) return false;
+        const bytes: usize = @intCast(bytesRead);
+        const paramsObj = std.json.parseFromSlice(Parameters.ParamValues, self.allocator, buf[0..bytes], .{}) catch return false;
+        defer paramsObj.deinit();
+
+        self.params = paramsObj.value;
         return true;
     }
 };

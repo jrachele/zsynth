@@ -4,10 +4,12 @@ const Step = std.Build.Step;
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const clap_bindings = b.dependency("clap-bindings", .{});
-    const exe = b.addSharedLibrary(.{ .name = "zig_audio_plugin", .target = target, .optimize = std.builtin.OptimizeMode.Debug, .root_source_file = .{ .cwd_relative = "src/main.zig" } });
+    const regex = b.dependency("regex", .{});
+    const exe = b.addSharedLibrary(.{ .name = "zsynth", .target = target, .optimize = std.builtin.OptimizeMode.Debug, .root_source_file = .{ .cwd_relative = "src/main.zig" } });
 
     // Add CLAP headers
     exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
+    exe.root_module.addImport("regex", regex.module("regex"));
 
     const rename_dll_step = CreateClapPluginStep.create(b, exe);
     rename_dll_step.step.dependOn(&b.addInstallArtifact(exe, .{}).step);
@@ -38,9 +40,9 @@ pub const CreateClapPluginStep = struct {
         const self: *Self = @fieldParentPtr("step", step);
         if (self.build.build_root.path) |path| {
             var dir = try std.fs.openDirAbsolute(path, .{});
-            _ = try dir.updateFile("zig-out/lib/libzig_audio_plugin.dylib", dir, "zig-out/lib/Zig Audio Plugin.clap/Contents/MacOS/Zig Audio Plugin", .{});
-            _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/Zig Audio Plugin.clap/Contents/info.plist", .{});
-            _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/Zig Audio Plugin.clap/Contents/PkgInfo", .{});
+            _ = try dir.updateFile("zig-out/lib/libzsynth.dylib", dir, "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth", .{});
+            _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/ZSynth.clap/Contents/info.plist", .{});
+            _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/ZSynth.clap/Contents/PkgInfo", .{});
         }
     }
 };
