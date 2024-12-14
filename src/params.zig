@@ -203,6 +203,15 @@ fn valueToText(
     return true;
 }
 
+fn anyUnitEql(unit: []const u8, cmps: []const []const u8) bool {
+    for (cmps) |cmp| {
+        if (std.mem.startsWith(u8, unit, cmp)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn textToValue(
     plugin: *const clap.Plugin,
     id: clap.Id,
@@ -214,7 +223,21 @@ fn textToValue(
     const param_type: Parameter = @enumFromInt(index);
     const value = std.mem.span(value_text);
 
+    // Handle this as a special case as it doesn't fit the numerical value regex
     if (param_type == Parameter.Wave) {
+        if (std.mem.startsWith(u8, value, @tagName(Wave.Sine))) {
+            out_value.* = @intFromEnum(Wave.Sine);
+            return true;
+        } else if (std.mem.startsWith(u8, value, @tagName(Wave.HalfSine))) {
+            out_value.* = @intFromEnum(Wave.HalfSine);
+            return true;
+        } else if (std.mem.startsWith(u8, value, @tagName(Wave.Saw))) {
+            out_value.* = @intFromEnum(Wave.Saw);
+            return true;
+        } else if (std.mem.startsWith(u8, value, @tagName(Wave.Triangle))) {
+            out_value.* = @intFromEnum(Wave.Triangle);
+            return true;
+        }
         return false;
     }
 
@@ -223,11 +246,15 @@ fn textToValue(
     const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%)?\\s*";
     var re = regex.Regex.compile(self.allocator, pattern) catch return false;
     defer re.deinit();
+
+    // If we had no matches, the input is invalid
     var caps = re.captures(value) catch return false;
     if (caps == null) return false;
     defer caps.?.deinit();
     const valueString = caps.?.sliceAt(1).?;
     var unitSlice: ?[]const u8 = null;
+
+    // If we didn't have a unit afterward, don't try to assign it; depending on the param we will choose a default
     if (caps.?.len() == 3) {
         unitSlice = caps.?.sliceAt(2);
     }
@@ -239,9 +266,9 @@ fn textToValue(
 
     switch (param_type) {
         Parameter.Attack, Parameter.Decay, Parameter.Release => {
-            if (std.mem.startsWith(u8, &unitString, "S") or std.mem.startsWith(u8, &unitString, "s") or std.mem.startsWith(u8, &unitString, "seconds")) {
+            if (anyUnitEql(&unitString, &.{ "S", "s", "seconds" })) {
                 out_value.* = valFloat * 1000;
-            } else if (unitSlice == null or std.mem.startsWith(u8, &unitString, "MS") or std.mem.startsWith(u8, &unitString, "Ms") or std.mem.startsWith(u8, &unitString, "ms") or std.mem.startsWith(u8, &unitString, "millis") or std.mem.startsWith(u8, &unitString, "milliseconds")) {
+            } else if (unitSlice == null or anyUnitEql(&unitString, &.{ "MS", "Ms", "ms", "millis", "milliseconds" })) {
                 out_value.* = valFloat;
             } else {
                 return false;
