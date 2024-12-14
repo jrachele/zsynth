@@ -241,8 +241,8 @@ fn textToValue(
         return false;
     }
 
-    var unitString: [64]u8 = undefined;
-    var valFloat: f64 = 0;
+    var unit_string: [64]u8 = undefined;
+    var val_float: f64 = 0;
     const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%)?\\s*";
     var re = regex.Regex.compile(self.allocator, pattern) catch return false;
     defer re.deinit();
@@ -251,34 +251,34 @@ fn textToValue(
     var caps = re.captures(value) catch return false;
     if (caps == null) return false;
     defer caps.?.deinit();
-    const valueString = caps.?.sliceAt(1).?;
-    var unitSlice: ?[]const u8 = null;
+    const value_string = caps.?.sliceAt(1).?;
+    var unit_slice: ?[]const u8 = null;
 
     // If we didn't have a unit afterward, don't try to assign it; depending on the param we will choose a default
     if (caps.?.len() == 3) {
-        unitSlice = caps.?.sliceAt(2);
+        unit_slice = caps.?.sliceAt(2);
     }
-    if (unitSlice != null) {
-        std.mem.copyForwards(u8, &unitString, unitSlice.?);
+    if (unit_slice != null) {
+        std.mem.copyForwards(u8, &unit_string, unit_slice.?);
     }
 
-    valFloat = std.fmt.parseFloat(f64, valueString) catch return false;
+    val_float = std.fmt.parseFloat(f64, value_string) catch return false;
 
     switch (param_type) {
         Parameter.Attack, Parameter.Decay, Parameter.Release => {
-            if (anyUnitEql(&unitString, &.{ "S", "s", "seconds" })) {
-                out_value.* = valFloat * 1000;
-            } else if (unitSlice == null or anyUnitEql(&unitString, &.{ "MS", "Ms", "ms", "millis", "milliseconds" })) {
-                out_value.* = valFloat;
+            if (anyUnitEql(&unit_string, &.{ "S", "s", "seconds" })) {
+                out_value.* = val_float * 1000;
+            } else if (unit_slice == null or anyUnitEql(&unit_string, &.{ "MS", "Ms", "ms", "millis", "milliseconds" })) {
+                out_value.* = val_float;
             } else {
                 return false;
             }
         },
         Parameter.Sustain, Parameter.BaseAmplitude => {
-            if (std.mem.startsWith(u8, &unitString, "%")) {
-                out_value.* = valFloat / 100;
+            if (std.mem.startsWith(u8, &unit_string, "%")) {
+                out_value.* = val_float / 100;
             } else {
-                out_value.* = valFloat;
+                out_value.* = val_float;
             }
         },
         Parameter.Wave => {

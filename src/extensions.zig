@@ -27,11 +27,11 @@ const AudioPorts = struct {
     }
     /// get info about an audio port. returns true on success and stores the result into `info`.
     fn get(_: *const clap.Plugin, index: u32, is_input: bool, info: *clap.extensions.audio_ports.Info) callconv(.C) bool {
-        var nameBuf: [clap.name_capacity]u8 = undefined;
+        var name_buf: [clap.name_capacity]u8 = undefined;
         if (is_input) {
             return false;
         } else {
-            const name = std.fmt.bufPrint(&nameBuf, "Audio Output {}", .{index}) catch {
+            const name = std.fmt.bufPrint(&name_buf, "Audio Output {}", .{index}) catch {
                 return false;
             };
             std.mem.copyForwards(u8, &info.name, name);
@@ -106,13 +106,13 @@ const State = struct {
         const self = MyPlugin.fromPlugin(plugin);
         const MAX_BUF_SIZE = 1024; // this is entirely arbitrary.
         var buf: [MAX_BUF_SIZE]u8 = undefined;
-        const bytesRead = stream.read(stream, &buf, MAX_BUF_SIZE);
-        if (bytesRead < 0) return false;
-        const bytes: usize = @intCast(bytesRead);
-        const paramsObj = std.json.parseFromSlice(Parameters.ParamValues, self.allocator, buf[0..bytes], .{}) catch return false;
-        defer paramsObj.deinit();
+        const bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
+        if (bytes_read < 0) return false;
+        const bytes: usize = @intCast(bytes_read);
+        const params_obj = std.json.parseFromSlice(Parameters.ParamValues, self.allocator, buf[0..bytes], .{}) catch return false;
+        defer params_obj.deinit();
 
-        self.params = paramsObj.value;
+        self.params = params_obj.value;
         return true;
     }
 };

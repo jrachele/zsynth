@@ -311,7 +311,7 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
             // Then we can tell where we are in the segment by passing in the current_time minus the start_time
             // And throwing that into sine
             const phase = (frequency / self.sample_rate.?) * (time - start_time);
-            const phaseValue = phase - std.math.floor(phase);
+            const phase_value = phase - std.math.floor(phase);
             var wave: f64 = 0;
             switch (waveType) {
                 Wave.Sine => {
@@ -321,13 +321,13 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
                     wave = clamp1(std.math.sin(phase * 2.0 * 3.14159));
                 },
                 Wave.Saw => {
-                    wave = (phaseValue * 2) - 1;
+                    wave = (phase_value * 2) - 1;
                 },
                 Wave.Triangle => {
-                    if (phaseValue < 0.5) {
-                        wave = phaseValue * 2;
+                    if (phase_value < 0.5) {
+                        wave = phase_value * 2;
                     } else {
-                        wave = (1 - phaseValue) * 2;
+                        wave = (1 - phase_value) * 2;
                     }
                     wave = (wave * 2) - 1;
                 },
@@ -380,11 +380,11 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
     const self = fromPlugin(plugin);
     if (self.jobs.should_rescan_params) {
         // Tell the host to rescan the parameters
-        const paramsHost = self.host.getExtension(self.host, clap.extensions.parameters.id);
-        if (paramsHost == null) {
+        const params_host = self.host.getExtension(self.host, clap.extensions.parameters.id);
+        if (params_host == null) {
             std.debug.print("Could not get params host!\n", .{});
         } else {
-            const p: *const clap.extensions.parameters.Host = @ptrCast(@alignCast(paramsHost.?));
+            const p: *const clap.extensions.parameters.Host = @ptrCast(@alignCast(params_host.?));
             std.debug.print("Clearing and rescanning all", .{});
             var i: usize = 0;
             while (i < Parameters.param_count) : (i += 1) {
