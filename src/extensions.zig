@@ -6,11 +6,11 @@ const GUI = @import("gui.zig");
 const MyPlugin = @import("plugin.zig");
 
 // Extensions
-pub const audio_ports = AudioPorts.create();
-pub const note_ports = NotePorts.create();
-pub const params = Parameters.create();
-pub const state = State.create();
-pub const gui = GUI.create();
+pub const ext_audio_ports = AudioPorts.create();
+pub const ext_note_ports = NotePorts.create();
+pub const ext_params = Parameters.create();
+pub const ext_state = State.create();
+pub const ext_gui = GUI.create();
 
 // Audio Ports Extension
 const AudioPorts = struct {
