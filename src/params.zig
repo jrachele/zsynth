@@ -19,6 +19,7 @@ pub const Wave = enum(u32) {
     HalfSine = 2,
     Saw = 3,
     Triangle = 4,
+    Square = 5,
 };
 
 pub const ParamValues = std.EnumArray(Parameter, f64);
@@ -236,6 +237,9 @@ fn textToValue(
             return true;
         } else if (std.mem.startsWith(u8, value, @tagName(Wave.Triangle))) {
             out_value.* = @intFromEnum(Wave.Triangle);
+            return true;
+        } else if (std.mem.startsWith(u8, value, @tagName(Wave.Square))) {
+            out_value.* = @intFromEnum(Wave.Square);
             return true;
         }
         return false;

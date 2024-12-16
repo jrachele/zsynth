@@ -41,7 +41,8 @@ pub fn fromPlugin(plugin: *const clap.Plugin) *@This() {
 
 pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
     const clap_demo = try allocator.create(@This());
-    const voices = std.ArrayList(Voice).init(allocator);
+    const params = Parameters.ParamValues.init(Parameters.param_defaults);
+    var voices = std.ArrayList(Voice).init(allocator);
     errdefer voices.deinit();
     errdefer allocator.destroy(clap_demo);
     clap_demo.* = .{
@@ -62,7 +63,7 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         },
         .host = host,
         .voices = voices,
-        .params = Parameters.ParamValues.init(Parameters.param_defaults),
+        .params = params,
     };
 
     return &clap_demo.plugin;
@@ -113,15 +114,8 @@ const Voice = struct {
     noteId: i32,
     channel: i16,
     key: i16,
-    start_time: i64,
-    release_time: i64,
-
-    pub fn is_ended(self: *const @This(), current_time: i64, release_interval_ms: f64, sample_rate: f64) bool {
-        const release_interval: i64 = @intFromFloat(to_frames(release_interval_ms, sample_rate));
-        // _ = sample_rate;
-        // const release_interval: i64 = @intFromFloat(release_interval_ms);
-        return self.release_time + release_interval <= current_time;
-    }
+    adsr: ADSR,
+    elapsed_frames: f64,
 };
 
 fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callconv(.C) clap.Process.Status {
@@ -146,8 +140,18 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 
     const output_left = output_buffer_left[0..frame_count];
     const output_right = output_buffer_right[0..frame_count];
-    @memset(output_left, 1);
-    @memset(output_right, 1);
+
+    // Set the initial signal to the impulse
+    @memset(output_left, 0);
+    @memset(output_right, 0);
+    output_left[0] = 1;
+    output_right[0] = 1;
+
+    // Process voice envelopes
+    const dt = (@as(f64, @floatFromInt(frame_count)) / self.sample_rate.?) * 1000;
+    for (self.voices.items) |*voice| {
+        voice.adsr.update(dt);
+    }
 
     while (current_frame < frame_count) {
         // Process all events scheduled for the current frame
@@ -160,7 +164,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 
             // Process the event if it matches the current frame
             if (event.sample_offset == current_frame) {
-                self.process_note_changes(clap_process.steady_time + current_frame, event);
+                self.processNoteChanges(event);
                 event_index += 1;
             }
         }
@@ -175,15 +179,14 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
         }
 
         // Render audio from the current frame to the next frame (or the end of the buffer)
-        self.render_audio(clap_process.steady_time + current_frame, current_frame, next_frame, output_buffer_left, output_buffer_right);
+        self.renderAudio(current_frame, next_frame, output_buffer_left, output_buffer_right);
         current_frame = next_frame;
     }
 
     var i: u32 = 0;
     while (i < self.voices.items.len) : (i += 1) {
         const voice = &self.voices.items[i];
-        const release_interval = self.params.get(Parameters.Parameter.Release);
-        if (voice.release_time > 0 and voice.is_ended(clap_process.steady_time, release_interval, self.sample_rate.?)) {
+        if (voice.adsr.isEnded()) {
             const note = clap.events.Note{
                 .header = .{
                     .size = @sizeOf(clap.events.Note),
@@ -213,7 +216,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 }
 
 // Processing logic
-fn process_note_changes(self: *@This(), current_time: i64, event: *const clap.events.Header) void {
+fn processNoteChanges(self: *@This(), event: *const clap.events.Header) void {
     if (event.space_id != clap.events.core_space_id) {
         return;
     }
@@ -222,7 +225,22 @@ fn process_note_changes(self: *@This(), current_time: i64, event: *const clap.ev
             // We can cast the pointer as we now know that is the parent type
             const note_event: *const clap.events.Note = @ptrCast(@alignCast(event));
             if (event.type == .note_on) {
-                const voice = Voice{ .noteId = note_event.note_id, .channel = note_event.channel, .key = note_event.key, .start_time = current_time, .release_time = std.math.minInt(i64) };
+                var adsr = ADSR.init(
+                    self.params.get(Parameter.Attack),
+                    self.params.get(Parameter.Decay),
+                    self.params.get(Parameter.Sustain),
+                    self.params.get(Parameter.Release),
+                );
+
+                adsr.onNoteOn();
+
+                const voice = Voice{
+                    .noteId = note_event.note_id,
+                    .channel = note_event.channel,
+                    .key = note_event.key,
+                    .adsr = adsr,
+                    .elapsed_frames = 0,
+                };
 
                 self.voices.append(voice) catch {
                     std.debug.print("Unable to append voice!", .{});
@@ -243,7 +261,7 @@ fn process_note_changes(self: *@This(), current_time: i64, event: *const clap.ev
                                 i -= 1;
                             }
                         } else {
-                            voice.release_time = current_time;
+                            voice.adsr.onNoteOff();
                         }
                     }
                 }
@@ -259,7 +277,7 @@ fn clamp1(f: f64) f64 {
     return f;
 }
 
-fn to_frames(ms: f64, sample_rate: f64) f64 {
+fn toFrames(ms: f64, sample_rate: f64) f64 {
     const seconds = ms / 1000;
     return std.math.floor(sample_rate * seconds);
 }
@@ -272,45 +290,117 @@ fn min(a: f64, b: f64) f64 {
     }
 }
 
-fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
-    var index = start;
-    var time = @as(f64, @floatFromInt(current_time));
+fn feedForward(x: []f64, fir: []const f64) f64 {
+    var i: usize = 0;
+    while (i < fir.len) : (i += 1) {
+        x[i] = fir[i] * x[x.len - 1 - i];
+    }
+    return x[x.len - 1];
+}
 
-    const attack_interval_ms = self.params.get(Parameter.Attack);
-    const decay_interval_ms = self.params.get(Parameter.Decay);
-    const release_interval_ms = self.params.get(Parameter.Release);
+const ADSRState = enum {
+    Idle,
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+};
 
-    const attack_interval = to_frames(attack_interval_ms, self.sample_rate.?);
-    const decay_interval = to_frames(decay_interval_ms, self.sample_rate.?);
-    const release_interval = to_frames(release_interval_ms, self.sample_rate.?);
-    // const attack_interval = attack_interval_ms;
-    // const decay_interval = decay_interval_ms;
-    // const release_interval = release_interval_ms;
+const ADSR = struct {
+    // State of the ADSR envelope
+    state: ADSRState,
+    attack_time: f64 = 0,
+    decay_time: f64 = 0,
+    release_time: f64 = 0,
+    sustain_value: f64 = 0,
 
-    const sustain_amplitude = self.params.get(Parameter.Sustain);
-    const attack_amplitude = self.params.get(Parameter.BaseAmplitude);
+    // Current envelope value for fast retrieval
+    value: f64 = 0,
 
+    // Elapsed time since the last state change
+    elapsed: f64 = 0,
+
+    // Below this states will transition naturally into the next state
+    const ms = 1;
+
+    pub fn init(attack_time: f64, decay_time: f64, sustain_value: f64, release_time: f64) @This() {
+        return .{
+            .state = ADSRState.Idle,
+            .attack_time = attack_time,
+            .decay_time = decay_time,
+            .release_time = release_time,
+            .sustain_value = sustain_value,
+        };
+    }
+
+    pub fn update(self: *@This(), dt: f64) void {
+        switch (self.state) {
+            ADSRState.Idle => {},
+            ADSRState.Attack => {
+                // Gradually build to attack_time
+                self.value = self.elapsed / self.attack_time;
+                if (self.value >= 1 or self.attack_time < ms) {
+                    // Once we hit the top, begin decaying
+                    self.value = 1;
+                    self.state = .Decay;
+                    self.elapsed = 0;
+                }
+            },
+            ADSRState.Decay => {
+                const decay_progress = self.elapsed / self.decay_time;
+                self.value = 1.0 + (self.sustain_value - 1.0) * decay_progress;
+                if (self.elapsed >= self.decay_time or self.decay_time < ms) {
+                    self.value = self.sustain_value;
+                    self.state = .Sustain;
+                }
+            },
+            ADSRState.Sustain => {
+                self.value = self.sustain_value;
+            },
+            ADSRState.Release => {
+                const release_progress = self.elapsed / self.release_time;
+                self.value = self.sustain_value * (1.0 - release_progress);
+                if (self.elapsed >= self.release_time or self.release_time < ms) {
+                    self.value = 0.0;
+                    self.state = .Idle;
+                }
+            },
+        }
+        self.elapsed += dt;
+    }
+
+    fn onNoteOn(self: *@This()) void {
+        self.state = .Attack;
+        self.elapsed = 0;
+    }
+
+    fn onNoteOff(self: *@This()) void {
+        self.state = .Release;
+        self.elapsed = 0;
+    }
+
+    fn isEnded(self: *const @This()) bool {
+        return self.state == .Idle and self.elapsed > 0;
+    }
+};
+
+fn renderAudio(self: *@This(), start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     const waveValue: u32 = @intFromFloat(self.params.get(Parameter.Wave));
     const waveType: Wave = @enumFromInt(waveValue);
 
+    var index = start;
     while (index < end) : (index += 1) {
-        var sum: f64 = 0;
-        // Apply a sine wave for each voice, this could/should be done in a separate function
-        var i: u32 = 0;
-        while (i < self.voices.items.len) : (i += 1) {
-            const voice = &self.voices.items[i];
+        var voice_sum: f64 = 0;
+        for (self.voices.items) |*voice| {
 
             // Oscillations per second.
             const frequency = 440.0 * std.math.exp2((@as(f64, @floatFromInt(voice.key)) - 57.0) / 12.0);
 
-            const start_time = @as(f64, @floatFromInt(voice.start_time));
-            const release_time = @as(f64, @floatFromInt(voice.release_time));
-
             // Where in the wave are we? 1 wavelength is 1 / frequency long
             // So we can divide that by the sample rate to get the number of wave segments per sample
-            // Then we can tell where we are in the segment by passing in the current_time minus the start_time
+            // Then we can tell where we are in the segment by passing in the elapsed frames the voice has already had
             // And throwing that into sine
-            const phase = (frequency / self.sample_rate.?) * (time - start_time);
+            const phase = (frequency / self.sample_rate.?) * voice.elapsed_frames;
             const phase_value = phase - std.math.floor(phase);
             var wave: f64 = 0;
             switch (waveType) {
@@ -331,29 +421,23 @@ fn render_audio(self: *@This(), current_time: i64, start: u32, end: u32, output_
                     }
                     wave = (wave * 2) - 1;
                 },
+                Wave.Square => {
+                    if (phase_value < 0.5) {
+                        wave = -1;
+                    } else {
+                        wave = 1;
+                    }
+                },
             }
 
-            // Here we want to process ADSR
-            const attack_percentage = clamp1((time - start_time) / attack_interval);
-            var release_percentage: f64 = 1;
-            var attack_finished = start_time + attack_interval;
-            if (release_time > 0) {
-                release_percentage = 1 - clamp1((time - release_time) / release_interval);
-                attack_finished = min(attack_finished, release_time);
-            }
+            // Elapse the voice time by a frame
+            voice.elapsed_frames += 1;
 
-            var sustain_percentage: f64 = 1;
-            if (decay_interval > 0) {
-                const decay_percentage = clamp1((time - attack_finished) / decay_interval);
-                // Once we are completely decayed, we are at full sustain value. So the true amplitude percentage is
-                sustain_percentage = (attack_amplitude * (1 - decay_percentage)) + (sustain_amplitude * decay_percentage);
-            }
-            sum += wave * attack_percentage * release_percentage * sustain_percentage;
+            voice_sum += wave * voice.adsr.value;
         }
-
-        output_left[index] = @floatCast(sum);
-        output_right[index] = @floatCast(sum);
-        time += 1;
+        const output: f32 = @floatCast(voice_sum);
+        output_left[index] = output;
+        output_right[index] = output;
     }
 }
 fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const anyopaque {
