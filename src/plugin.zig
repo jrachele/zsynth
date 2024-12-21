@@ -7,7 +7,7 @@ const Waves = @import("waves.zig");
 const audio = @import("audio.zig");
 
 const Parameter = Params.Parameter;
-const Wave = Params.Wave;
+const Wave = Waves.Wave;
 const Voice = audio.Voice;
 
 sample_rate: ?f64 = null,
@@ -23,7 +23,8 @@ jobs: MainThreadJobs = .{},
 const MainThreadJobs = packed struct(u32) {
     should_rescan_params: bool = false,
     sync_params_to_host: bool = false,
-    _: u30 = 0,
+    generate_wave_tables: bool = false,
+    _: u29 = 0,
 };
 
 pub const desc = clap.Plugin.Descriptor{
@@ -47,6 +48,8 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
     const clap_demo = try allocator.create(@This());
     const param_values = Params.ParamValues.init(Params.param_defaults);
     var voices = std.ArrayList(Voice).init(allocator);
+    const wave_table = Waves.init(allocator);
+    errdefer wave_table.deinit();
     errdefer voices.deinit();
     errdefer allocator.destroy(clap_demo);
     clap_demo.* = .{
@@ -68,7 +71,7 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         .host = host,
         .voices = voices,
         .params = param_values,
-        .wave_table = .{},
+        .wave_table = wave_table,
     };
 
     return &clap_demo.plugin;
@@ -83,6 +86,7 @@ fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
     var self = fromPlugin(plugin);
     self.voices.deinit();
     self.allocator.destroy(self);
+    self.wave_table.deinit();
 }
 
 fn _activate(
@@ -93,7 +97,8 @@ fn _activate(
 ) callconv(.C) bool {
     var self = fromPlugin(plugin);
     self.sample_rate = sample_rate;
-    self.wave_table.sample_rate = sample_rate;
+    self.jobs.generate_wave_tables = true;
+    self.host.requestCallback(self.host);
 
     return true;
 }
@@ -246,5 +251,13 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
             });
         }
         self.jobs.should_rescan_params = false;
+    }
+    if (self.jobs.generate_wave_tables) {
+        if (self.sample_rate == null) {
+            std.debug.panic("Attempted to generate wave tables without setting the sample rate!", .{});
+            return;
+        }
+        self.wave_table.generate_table(self.sample_rate.?) catch unreachable;
+        self.jobs.generate_wave_tables = false;
     }
 }

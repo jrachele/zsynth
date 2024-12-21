@@ -31,10 +31,18 @@
             .url = "https://github.com/tiehuis/zig-regex/archive/7bc0fd7.tar.gz",
             .hash = "1220b497739b6fd60f627da85862cbd0cec01f3d6b7ddaa923057a7999ecfa138704",
         },
-        .dvui = .{
-            .url = "https://github.com/david-vanderson/dvui/archive/e7cf46544d3a016e436de4b4ee8becd9dc1ac03e.tar.gz",
-            .hash = "1220949786e6564134bd9ca7d50cc307bffac1d8542c5864fcc7056e10e37213ec5f",
-        },
+        // Temporarily disabling until support is there
+        // .dvui = .{
+        //     .url = "https://github.com/david-vanderson/dvui/archive/7cd330417f9897fc3f068d42cfa70d45e0c48759.tar.gz",
+        //     .hash = "1220926afc74b148ab46b0946a4a8d3f701dc426d302ac707e09d04fc64dde4a7748",
+        // },
+        // .zigplotlib = .{
+        //     .url = "https://github.com/Remy2701/zigplotlib/archive/main.tar.gz",
+        //     .hash = "1220603bb8d5cf2fc6392f27b1e28cb8ecf5cbb6fe4a90961ded1b4452f7721b8093",
+        // },
+        .zigplotlib = .{
+            .path = "zigplotlib"
+        }
     },
     .paths = .{
         "build.zig",

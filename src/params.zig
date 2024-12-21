@@ -3,6 +3,8 @@ const clap = @import("clap-bindings");
 const regex = @import("regex");
 const MyPlugin = @import("plugin.zig");
 
+const Wave = @import("waves.zig").Wave;
+
 const Info = clap.extensions.parameters.Info;
 
 pub const Parameter = enum {
@@ -12,14 +14,6 @@ pub const Parameter = enum {
     Release,
     BaseAmplitude,
     Wave,
-};
-
-pub const Wave = enum(u32) {
-    Sine = 1,
-    HalfSine = 2,
-    Saw = 3,
-    Triangle = 4,
-    Square = 5,
 };
 
 pub const ParamValues = std.EnumArray(Parameter, f64);
@@ -228,9 +222,6 @@ fn textToValue(
     if (param_type == Parameter.Wave) {
         if (std.mem.startsWith(u8, value, @tagName(Wave.Sine))) {
             out_value.* = @intFromEnum(Wave.Sine);
-            return true;
-        } else if (std.mem.startsWith(u8, value, @tagName(Wave.HalfSine))) {
-            out_value.* = @intFromEnum(Wave.HalfSine);
             return true;
         } else if (std.mem.startsWith(u8, value, @tagName(Wave.Saw))) {
             out_value.* = @intFromEnum(Wave.Saw);

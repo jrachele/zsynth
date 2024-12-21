@@ -5,21 +5,57 @@ const gui_supported = false;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
     const clap_bindings = b.dependency("clap-bindings", .{});
     const regex = b.dependency("regex", .{});
-    const dvui = b.dependency("dvui", .{});
-    const exe = b.addSharedLibrary(.{ .name = "zsynth", .target = target, .optimize = std.builtin.OptimizeMode.Debug, .root_source_file = .{ .cwd_relative = "src/main.zig" } });
+
+    const lib = b.addSharedLibrary(
+        .{
+            .name = "zsynth",
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = .{ .cwd_relative = "src/main.zig" },
+        },
+    );
 
     // Add CLAP headers
-    exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
-    exe.root_module.addImport("regex", regex.module("regex"));
-    if (gui_supported) {
-        exe.root_module.addImport("dvui", dvui.module("dvui_sdl"));
-    }
+    lib.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
+    lib.root_module.addImport("regex", regex.module("regex"));
 
-    const rename_dll_step = CreateClapPluginStep.create(b, exe);
-    rename_dll_step.step.dependOn(&b.addInstallArtifact(exe, .{}).step);
+    // if (gui_supported) {
+    //     const dvui = b.dependency("dvui", .{});
+    //     lib.root_module.addImport("dvui", dvui.module("dvui_sdl"));
+    // }
+
+    const rename_dll_step = CreateClapPluginStep.create(b, lib);
+    rename_dll_step.step.dependOn(&b.addInstallArtifact(lib, .{}).step);
     b.getInstallStep().dependOn(&rename_dll_step.step);
+
+    // Also create executable for testing
+    if (optimize == .Debug) {
+        std.debug.print("Generating binary for plotting\n", .{});
+        const exe = b.addExecutable(
+            .{
+                .name = "zsynth",
+                .target = target,
+                .optimize = optimize,
+                .root_source_file = .{ .cwd_relative = "src/waves.zig" },
+            },
+        );
+
+        const zigplotlib = b.dependency("zigplotlib", .{
+            .target = target,
+            .optimize = optimize,
+        });
+
+        exe.root_module.addImport("plotlib", zigplotlib.module("zigplotlib"));
+
+        b.installArtifact(exe);
+        const run_exe = b.addRunArtifact(exe);
+
+        const run_step = b.step("run", "Run the application");
+        run_step.dependOn(&run_exe.step);
+    }
 }
 
 pub const CreateClapPluginStep = struct {

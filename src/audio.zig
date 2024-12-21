@@ -3,11 +3,12 @@ const clap = @import("clap-bindings");
 
 const Plugin = @import("plugin.zig");
 const Params = @import("params.zig");
+const Waves = @import("waves.zig");
 
 const ADSR = @import("adsr.zig");
 
 const Parameter = Params.Parameter;
-const Wave = Params.Wave;
+const Wave = Waves.Wave;
 
 pub const Voice = struct {
     noteId: i32,
@@ -87,34 +88,7 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
     while (index < end) : (index += 1) {
         var voice_sum: f64 = 0;
         for (self.voices.items) |*voice| {
-
-            // Oscillations per second.
-            const frequency = 440.0 * std.math.exp2((@as(f64, @floatFromInt(voice.key)) - 57.0) / 12.0);
-
-            // Where in the wave are we? 1 wavelength is 1 / frequency long
-            // So we can divide that by the sample rate to get the number of wave segments per sample
-            // Then we can tell where we are in the segment by passing in the elapsed frames the voice has already had
-            // And throwing that into sine
-            const phase = (frequency / self.sample_rate.?) * voice.elapsed_frames;
-
-            var wave: f64 = 0;
-            switch (waveType) {
-                Wave.Sine => {
-                    wave = std.math.sin(phase * 2.0 * 3.14159);
-                },
-                Wave.HalfSine => {
-                    wave = clamp1(std.math.sin(phase * 2.0 * 3.14159));
-                },
-                Wave.Saw => {
-                    wave = self.wave_table.saw(frequency, voice.elapsed_frames);
-                },
-                Wave.Triangle => {
-                    wave = self.wave_table.triangle(frequency, voice.elapsed_frames);
-                },
-                Wave.Square => {
-                    wave = self.wave_table.square(frequency, voice.elapsed_frames);
-                },
-            }
+            const wave = self.wave_table.get(waveType, self.sample_rate.?, voice.key, voice.elapsed_frames);
 
             // Elapse the voice time by a frame and update envelope
             voice.elapsed_frames += 1;

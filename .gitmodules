@@ -1,0 +1,3 @@
+[submodule "zigplotlib"]
+	path = zigplotlib
+	url = https://github.com/jrachele/zigplotlib.git
