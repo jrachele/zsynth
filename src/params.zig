@@ -312,4 +312,10 @@ fn flush(
             self.params.set(@enumFromInt(index), param_event.value);
         }
     }
+    for (self.voices.items) |*voice| {
+        voice.adsr.attack_time = self.params.get(Parameter.Attack);
+        voice.adsr.decay_time = self.params.get(Parameter.Decay);
+        voice.adsr.release_time = self.params.get(Parameter.Release);
+        voice.adsr.sustain_value = self.params.get(Parameter.Sustain);
+    }
 }

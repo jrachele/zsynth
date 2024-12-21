@@ -3,6 +3,7 @@ const clap = @import("clap-bindings");
 
 const extensions = @import("extensions.zig");
 const Params = @import("params.zig");
+const Waves = @import("waves.zig");
 const audio = @import("audio.zig");
 
 const Parameter = Params.Parameter;
@@ -15,6 +16,7 @@ plugin: clap.Plugin,
 host: *const clap.Host,
 voices: std.ArrayList(Voice),
 params: Params.ParamValues,
+wave_table: Waves,
 
 jobs: MainThreadJobs = .{},
 
@@ -66,6 +68,7 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         .host = host,
         .voices = voices,
         .params = param_values,
+        .wave_table = .{},
     };
 
     return &clap_demo.plugin;
@@ -90,6 +93,7 @@ fn _activate(
 ) callconv(.C) bool {
     var self = fromPlugin(plugin);
     self.sample_rate = sample_rate;
+    self.wave_table.sample_rate = sample_rate;
 
     return true;
 }

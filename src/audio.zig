@@ -96,7 +96,7 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
             // Then we can tell where we are in the segment by passing in the elapsed frames the voice has already had
             // And throwing that into sine
             const phase = (frequency / self.sample_rate.?) * voice.elapsed_frames;
-            const phase_value = phase - std.math.floor(phase);
+
             var wave: f64 = 0;
             switch (waveType) {
                 Wave.Sine => {
@@ -106,29 +106,20 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
                     wave = clamp1(std.math.sin(phase * 2.0 * 3.14159));
                 },
                 Wave.Saw => {
-                    wave = (phase_value * 2) - 1;
+                    wave = self.wave_table.saw(frequency, voice.elapsed_frames);
                 },
                 Wave.Triangle => {
-                    if (phase_value < 0.5) {
-                        wave = phase_value * 2;
-                    } else {
-                        wave = (1 - phase_value) * 2;
-                    }
-                    wave = (wave * 2) - 1;
+                    wave = self.wave_table.triangle(frequency, voice.elapsed_frames);
                 },
                 Wave.Square => {
-                    if (phase_value < 0.5) {
-                        wave = -1;
-                    } else {
-                        wave = 1;
-                    }
+                    wave = self.wave_table.square(frequency, voice.elapsed_frames);
                 },
             }
 
             // Elapse the voice time by a frame and update envelope
             voice.elapsed_frames += 1;
 
-            voice_sum += wave * voice.adsr.value;
+            voice_sum += wave * voice.adsr.value * self.params.get(Parameter.BaseAmplitude);
 
             const dt = (1 / self.sample_rate.?) * 1000;
             voice.adsr.update(dt);
