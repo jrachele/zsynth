@@ -1,10 +1,10 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
 
-const Plugin = @import("plugin.zig");
-const Params = @import("params.zig");
+const Plugin = @import("../plugin.zig");
+const Params = @import("../ext/params.zig");
 const Waves = @import("waves.zig");
-
 const ADSR = @import("adsr.zig");
 
 const Parameter = Params.Parameter;
@@ -14,8 +14,9 @@ pub const Voice = struct {
     noteId: i32,
     channel: i16,
     key: i16,
+    velocity: f64,
     adsr: ADSR,
-    elapsed_frames: f64,
+    elapsed_frames: u64,
 };
 
 // Processing logic
@@ -41,12 +42,13 @@ pub fn processNoteChanges(self: *Plugin, event: *const clap.events.Header) void 
                     .noteId = note_event.note_id,
                     .channel = note_event.channel,
                     .key = note_event.key,
+                    .velocity = note_event.velocity,
                     .adsr = adsr,
                     .elapsed_frames = 0,
                 };
 
                 self.voices.append(voice) catch {
-                    std.debug.print("Unable to append voice!", .{});
+                    std.debug.print("Unable to append voice!\n", .{});
                     return;
                 };
             } else {
@@ -81,19 +83,32 @@ fn clamp1(f: f64) f64 {
 }
 
 pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
-    const waveValue: u32 = @intFromFloat(self.params.get(Parameter.Wave));
-    const waveType: Wave = @enumFromInt(waveValue);
+    const wave_value: u32 = @intFromFloat(self.params.get(Parameter.WaveShape));
+    const wave_type: Wave = @enumFromInt(wave_value);
 
     var index = start;
     while (index < end) : (index += 1) {
         var voice_sum: f64 = 0;
         for (self.voices.items) |*voice| {
-            const wave = self.wave_table.get(waveType, self.sample_rate.?, voice.key, voice.elapsed_frames);
+            var wave: f64 = undefined;
+            const t: f64 = @floatFromInt(voice.elapsed_frames);
+            if (builtin.mode == .Debug and self.params.get(Parameter.DebugBool1) != 0.0) {
+                // If this is true, the wave table should be subverted and the wave will be generated on the spot
+                const frequency = Waves.getFrequency(voice.key);
+                wave = Waves.generate(wave_type, self.sample_rate.?, frequency, t);
+                const cached_value = self.wave_table.get(wave_type, self.sample_rate.?, voice.key, t);
+                if (wave != cached_value) {
+                    std.debug.panic("Irregularity in wave table at t:{d} , Frequency: {d}\n", .{ t, frequency });
+                }
+            } else {
+                // Otherwise, retrieve the wave data from the pre-calculated table
+                wave = self.wave_table.get(wave_type, self.sample_rate.?, voice.key, t);
+            }
 
             // Elapse the voice time by a frame and update envelope
             voice.elapsed_frames += 1;
 
-            voice_sum += wave * voice.adsr.value * self.params.get(Parameter.BaseAmplitude);
+            voice_sum += wave * voice.adsr.value * voice.velocity;
 
             const dt = (1 / self.sample_rate.?) * 1000;
             voice.adsr.update(dt);

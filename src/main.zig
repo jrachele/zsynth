@@ -1,7 +1,7 @@
 const std = @import("std");
 const clap = @import("clap-bindings");
 
-const MyPlugin = @import("plugin.zig");
+const Plugin = @import("plugin.zig");
 
 var gpa: std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }) = undefined;
 
@@ -23,7 +23,7 @@ const ClapEntry = struct {
         std.debug.print("Plugin deinitialized\n", .{});
         switch (gpa.deinit()) {
             std.heap.Check.leak => {
-                std.debug.print("Leaks happened!", .{});
+                std.debug.print("Leaks happened!\n", .{});
             },
             else => {},
         }
@@ -55,7 +55,7 @@ const ClapFactory = struct {
     fn _getPluginDescriptor(_: *const clap.PluginFactory, index: u32) callconv(.C) ?*const clap.Plugin.Descriptor {
         std.debug.print("getPluginDescriptor invoked\n", .{});
         if (index == 0) {
-            return &MyPlugin.desc;
+            return &Plugin.desc;
         }
         return null;
     }
@@ -71,12 +71,12 @@ const ClapFactory = struct {
             return null;
         }
 
-        if (!std.mem.eql(u8, std.mem.span(plugin_id), std.mem.span(MyPlugin.desc.id))) {
-            std.debug.print("Mismatched plugin id: {s}; descriptor id: {s}", .{ plugin_id, MyPlugin.desc.id });
+        if (!std.mem.eql(u8, std.mem.span(plugin_id), std.mem.span(Plugin.desc.id))) {
+            std.debug.print("Mismatched plugin id: {s}; descriptor id: {s}", .{ plugin_id, Plugin.desc.id });
             return null;
         }
 
-        const plugin = MyPlugin.create(host, gpa.allocator()) catch {
+        const plugin = Plugin.create(host, gpa.allocator()) catch {
             std.debug.print("Error allocating plugin!\n", .{});
             return null;
         };

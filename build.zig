@@ -33,13 +33,12 @@ pub fn build(b: *std.Build) void {
 
     // Also create executable for testing
     if (optimize == .Debug) {
-        std.debug.print("Generating binary for plotting\n", .{});
         const exe = b.addExecutable(
             .{
                 .name = "zsynth",
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = .{ .cwd_relative = "src/waves.zig" },
+                .root_source_file = .{ .cwd_relative = "src/audio/waves.zig" },
             },
         );
 

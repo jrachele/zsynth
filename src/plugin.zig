@@ -2,9 +2,11 @@ const std = @import("std");
 const clap = @import("clap-bindings");
 
 const extensions = @import("extensions.zig");
-const Params = @import("params.zig");
-const Waves = @import("waves.zig");
-const audio = @import("audio.zig");
+
+const Params = @import("ext/params.zig");
+const Waves = @import("audio/waves.zig");
+
+const audio = @import("audio/audio.zig");
 
 const Parameter = Params.Parameter;
 const Wave = Waves.Wave;
@@ -199,7 +201,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
                 .velocity = 1,
             };
             if (!clap_process.out_events.tryPush(clap_process.out_events, &note.header)) {
-                std.debug.print("Unable to process", .{});
+                std.debug.print("Unable to add note end events to outboard event queue!\n", .{});
                 return clap.Process.Status.@"error";
             }
 
@@ -257,7 +259,9 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
             std.debug.panic("Attempted to generate wave tables without setting the sample rate!", .{});
             return;
         }
-        self.wave_table.generate_table(self.sample_rate.?) catch unreachable;
+        self.wave_table.generate_table(self.sample_rate.?) catch |err| {
+            std.debug.print("Error occurred while generating wavetable: {}", .{err});
+        };
         self.jobs.generate_wave_tables = false;
     }
 }
