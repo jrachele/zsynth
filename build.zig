@@ -9,6 +9,12 @@ pub fn build(b: *std.Build) void {
     const clap_bindings = b.dependency("clap-bindings", .{});
     const regex = b.dependency("regex", .{});
 
+    const generate_wavetables_comptime = b.option(
+        bool,
+        "generate_wavetables_comptime",
+        "Generate and embed the wavetables at compile time. Will significantly impact compile times, but will reduce initial plugin start time.",
+    ) orelse false;
+
     const lib = b.addSharedLibrary(
         .{
             .name = "zsynth",
@@ -21,6 +27,10 @@ pub fn build(b: *std.Build) void {
     // Add CLAP headers
     lib.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
     lib.root_module.addImport("regex", regex.module("regex"));
+
+    var options = Step.Options.create(b);
+    options.addOption(bool, "generate_wavetables_comptime", generate_wavetables_comptime);
+    lib.root_module.addOptions("options", options);
 
     // if (gui_supported) {
     //     const dvui = b.dependency("dvui", .{});

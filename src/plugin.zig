@@ -1,6 +1,7 @@
 const std = @import("std");
 const clap = @import("clap-bindings");
 
+const options = @import("options");
 const extensions = @import("extensions.zig");
 
 const Params = @import("ext/params.zig");
@@ -248,7 +249,7 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
         self.jobs.should_rescan_params = false;
     }
     if (self.jobs.generate_wave_table) {
-        if (waves.should_generate_wave_table_at_comptime) {
+        if (options.generate_wavetables_comptime) {
             waves.wave_table = comptime waves.generate_wave_table();
         } else {
             waves.wave_table = waves.generate_wave_table();
