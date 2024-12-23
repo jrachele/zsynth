@@ -35,6 +35,7 @@ fn load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bo
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.debug.print("Error loading parameters: {}\n", .{err});
+        self.params = Params.ParamValues.init(Params.param_defaults);
         return true;
     };
     defer params_obj.deinit();

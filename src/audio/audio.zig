@@ -92,7 +92,7 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
         for (self.voices.items) |*voice| {
             var wave: f64 = undefined;
             const t: f64 = @floatFromInt(voice.elapsed_frames);
-            if (builtin.mode == .Debug and self.params.get(Parameter.DebugBool1) == 0.0) {
+            if (self.params.get(Parameter.DebugBool1) == 0.0) {
                 // If this is true, the wave table should be subverted and the wave will be generated on the spot
                 const frequency = waves.getFrequency(voice.key);
                 const phase = (frequency / self.sample_rate.?) * t;

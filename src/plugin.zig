@@ -92,10 +92,8 @@ fn _activate(
 ) callconv(.C) bool {
     var self = fromPlugin(plugin);
     self.sample_rate = sample_rate;
-    if (!waves.comptime_wave_table) {
-        self.jobs.generate_wave_table = true;
-        self.host.requestCallback(self.host);
-    }
+    self.jobs.generate_wave_table = true;
+    self.host.requestCallback(self.host);
 
     return true;
 }
@@ -250,8 +248,9 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
         self.jobs.should_rescan_params = false;
     }
     if (self.jobs.generate_wave_table) {
-        // Sanity check
-        if (!waves.comptime_wave_table) {
+        if (waves.should_generate_wave_table_at_comptime) {
+            waves.wave_table = comptime waves.generate_wave_table();
+        } else {
             waves.wave_table = waves.generate_wave_table();
         }
         self.jobs.generate_wave_table = false;

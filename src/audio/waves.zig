@@ -28,7 +28,7 @@ comptime {
 const WaveTable = [waveshape_count][table_count][sample_count]f64;
 
 // Calculate and embed the wave table at compile time for Release builds
-pub const comptime_wave_table = false or builtin.mode != .Debug;
+pub const should_generate_wave_table_at_comptime = false and builtin.mode != .Debug;
 
 pub inline fn generate_wave_table() WaveTable {
     @setEvalBranchQuota(std.math.maxInt(u32));
@@ -54,11 +54,6 @@ pub inline fn generate_wave_table() WaveTable {
 }
 
 pub var wave_table: WaveTable = undefined;
-comptime {
-    if (comptime_wave_table) {
-        wave_table = generate_wave_table();
-    }
-}
 
 pub const Wave = enum(u32) {
     Sine = 1,

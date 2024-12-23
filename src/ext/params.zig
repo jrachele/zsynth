@@ -135,6 +135,7 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
+                    .is_enum = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.WaveShape)),
                 .module = undefined,
