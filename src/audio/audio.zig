@@ -4,11 +4,11 @@ const clap = @import("clap-bindings");
 
 const Plugin = @import("../plugin.zig");
 const Params = @import("../ext/params.zig");
-const Waves = @import("waves.zig");
+const waves = @import("waves.zig");
 const ADSR = @import("adsr.zig");
 
 const Parameter = Params.Parameter;
-const Wave = Waves.Wave;
+const Wave = waves.Wave;
 
 pub const Voice = struct {
     noteId: i32,
@@ -84,7 +84,7 @@ fn clamp1(f: f64) f64 {
 
 pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     const wave_value: u32 = @intFromFloat(self.params.get(Parameter.WaveShape));
-    const wave_type: Wave = @enumFromInt(wave_value);
+    const wave_type: Wave = std.meta.intToEnum(Wave, wave_value) catch Wave.Sine;
 
     var index = start;
     while (index < end) : (index += 1) {
@@ -92,17 +92,14 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
         for (self.voices.items) |*voice| {
             var wave: f64 = undefined;
             const t: f64 = @floatFromInt(voice.elapsed_frames);
-            if (builtin.mode == .Debug and self.params.get(Parameter.DebugBool1) != 0.0) {
+            if (builtin.mode == .Debug and self.params.get(Parameter.DebugBool1) == 0.0) {
                 // If this is true, the wave table should be subverted and the wave will be generated on the spot
-                const frequency = Waves.getFrequency(voice.key);
-                wave = Waves.generate(wave_type, self.sample_rate.?, frequency, t);
-                const cached_value = self.wave_table.get(wave_type, self.sample_rate.?, voice.key, t);
-                if (wave != cached_value) {
-                    std.debug.panic("Irregularity in wave table at t:{d} , Frequency: {d}\n", .{ t, frequency });
-                }
+                const frequency = waves.getFrequency(voice.key);
+                const phase = (frequency / self.sample_rate.?) * t;
+                wave = waves.generate(wave_type, self.sample_rate.?, frequency, phase);
             } else {
                 // Otherwise, retrieve the wave data from the pre-calculated table
-                wave = self.wave_table.get(wave_type, self.sample_rate.?, voice.key, t);
+                wave = waves.get(wave_type, self.sample_rate.?, voice.key, t);
             }
 
             // Elapse the voice time by a frame and update envelope

@@ -17,6 +17,7 @@ pub const Parameter = enum {
 
     // Debug params
     DebugBool1,
+    DebugBool2,
 };
 
 pub const ParamValues = std.EnumArray(Parameter, f64);
@@ -29,6 +30,7 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
     .WaveShape = @intFromEnum(Wave.Sine),
 
     .DebugBool1 = 0.0,
+    .DebugBool2 = 0.0,
 };
 
 pub const param_count = std.meta.fields(Parameter).len;
@@ -156,8 +158,26 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool1)),
                 .module = undefined,
             };
-            std.mem.copyForwards(u8, &info.name, "DebugBool1");
+            std.mem.copyForwards(u8, &info.name, "Use Wave Table");
             std.mem.copyForwards(u8, &info.module, "Debug/Bool1");
+        },
+        Parameter.DebugBool2 => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.DebugBool2,
+                .min_value = 0,
+                .max_value = 1,
+                .name = undefined,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                    .is_hidden = builtin.mode != .Debug,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.DebugBool2)),
+                .module = undefined,
+            };
+            std.mem.copyForwards(u8, &info.name, "Bool2");
+            std.mem.copyForwards(u8, &info.module, "Debug/Bool2");
         },
     }
 
@@ -202,7 +222,7 @@ fn valueToText(
             const wave: Wave = @enumFromInt(intValue);
             _ = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
-        Parameter.DebugBool1 => {
+        Parameter.DebugBool1, Parameter.DebugBool2 => {
             const bool_value: bool = if (value != 0.0) true else false;
             _ = std.fmt.bufPrint(out_buf, "{s}", .{if (bool_value) "true" else "false"}) catch return false;
         },
@@ -246,7 +266,7 @@ fn textToValue(
             return true;
         }
         return false;
-    } else if (param_type == Parameter.DebugBool1) {
+    } else if (param_type == Parameter.DebugBool1 or param_type == Parameter.DebugBool2) {
         if (std.mem.startsWith(u8, value, "t")) {
             out_value.* = 1.0;
         } else {

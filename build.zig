@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
                 .name = "zsynth",
                 .target = target,
                 .optimize = optimize,
-                .root_source_file = .{ .cwd_relative = "src/audio/waves.zig" },
+                .root_source_file = .{ .cwd_relative = "src/diag.zig" },
             },
         );
 

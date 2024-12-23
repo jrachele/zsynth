@@ -1,89 +1,12 @@
 const Waves = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
 
+// TODO: Eventually implement wave tables for each sample
 const SampleRate = i32;
 const supported_sample_rates = [_]SampleRate{ 8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000 };
-const new_table_period = 3; // Every minor third
-
-// Wave data consists of a segmented list of data at sets of frequencies one new_table_period apart
-const WaveData = std.ArrayList(std.ArrayList(f64));
-const WaveTable = std.AutoHashMap(Wave, WaveData);
-
-tables: std.AutoHashMap(SampleRate, WaveTable),
-allocator: std.mem.Allocator,
-
-pub const Wave = enum(u32) {
-    Sine = 1,
-    Saw = 2,
-    Triangle = 3,
-    Square = 4,
-};
-
-pub fn init(allocator: std.mem.Allocator) Waves {
-    return Waves{
-        .tables = .init(allocator),
-        .allocator = allocator,
-    };
-}
-
-pub fn deinit(self: *Waves) void {
-    var it = self.tables.valueIterator();
-    while (it.next()) |wave_table| {
-        var wave_table_it = wave_table.valueIterator();
-        while (wave_table_it.next()) |wave_data| {
-            for (wave_data.items) |*sample_data| {
-                sample_data.deinit();
-            }
-            wave_data.deinit();
-        }
-        wave_table.deinit();
-    }
-    self.tables.deinit();
-}
-
-test "Generating table no leaks" {
-    const allocator = std.testing.allocator;
-    var wave_table = Waves.init(allocator);
-    defer wave_table.deinit();
-
-    const sample_rate: f64 = 48000;
-    try wave_table.generate_table(sample_rate);
-    try wave_table.generate_table(sample_rate);
-}
-
-test "Generate table check accuracy" {
-    const allocator = std.testing.allocator;
-    var wave_table = Waves.init(allocator);
-    defer wave_table.deinit();
-
-    const sample_rate: f64 = 48000;
-    try wave_table.generate_table(sample_rate);
-
-    for (0..87) |i| {
-        // // Account for the table subdivisions
-        var key: i16 = @intCast(i);
-        key = key - (@mod(key, new_table_period));
-        const frequency = getFrequency(key);
-
-        const num_samples: usize = @intFromFloat(sample_rate / frequency);
-        for (0..num_samples) |sample_i| {
-            const t: f64 = @floatFromInt(sample_i);
-            const cached_value = wave_table.get(Wave.Saw, sample_rate, key, t);
-            const generated_equivalent = generate_saw(sample_rate, frequency, t);
-            if (cached_value != generated_equivalent) {
-                std.debug.print("Values not exactly equal! cached: {d}, generated: {d}, for key: {d}, frequency: {d}, t: {d}\n", .{ cached_value, generated_equivalent, key, frequency, t });
-                try std.testing.expect(cached_value == generated_equivalent);
-            }
-        }
-    }
-}
-
-pub fn getFrequency(key: i16) f64 {
-    return 440.0 * std.math.exp2((@as(f64, @floatFromInt(key)) - 57.0) / 12.0);
-}
-
-fn sampleRateSupported(sample_rate: f64) bool {
+inline fn sampleRateSupported(sample_rate: f64) bool {
     for (supported_sample_rates) |rate_i| {
         const rate: f64 = @floatFromInt(rate_i);
         if (rate == sample_rate) return true;
@@ -92,113 +15,148 @@ fn sampleRateSupported(sample_rate: f64) bool {
     return false;
 }
 
-fn indexFromT(t: f64, sample_rate: f64, frequency: f64) usize {
-    const number_samples = sample_rate / frequency;
-    const index: usize = @intFromFloat(@mod(t, std.math.floor(number_samples)));
-    return index;
-}
+pub const sample_count = 256;
+const waveshape_count = std.meta.fields(Wave).len;
 
-// TODO: Somehow get this to work at comptime
-pub fn generate_table(self: *Waves, sample_rate: f64) !void {
-    std.debug.print("Generating wave tables for sample rate: {d}...\n", .{sample_rate});
-    const sample_rate_int: i32 = @intFromFloat(sample_rate);
-
-    // Get the wave table associated with the given sample rate, or create it if necessary
-    const wave_table_entry = try self.tables.getOrPut(sample_rate_int);
-    var wave_table: *WaveTable = wave_table_entry.value_ptr;
-    if (!wave_table_entry.found_existing) {
-        wave_table.* = .init(self.allocator);
+const half_steps_per_table = 4;
+const table_count = 128 / half_steps_per_table;
+comptime {
+    if (@mod(table_count, 1.0) != 0.0) {
+        @compileError("half_steps_per_table must be a divisor of 128!");
     }
+}
+const WaveTable = [waveshape_count][table_count][sample_count]f64;
+
+// Calculate and embed the wave table at compile time for Release builds
+pub const comptime_wave_table = false or builtin.mode != .Debug;
+
+pub inline fn generate_wave_table() WaveTable {
+    @setEvalBranchQuota(std.math.maxInt(u32));
+    var table: WaveTable = undefined;
+    const sample_rate = 48000;
+
     inline for (std.meta.fields(Wave)) |field| {
-        std.debug.print("Generating wave table for wave type: {s}...\n", .{field.name});
-        const wave_type: Wave = @enumFromInt(field.value);
-        const wave_data_entry = try wave_table.getOrPut(wave_type);
-        var wave_data: *WaveData = wave_data_entry.value_ptr;
-        if (wave_data_entry.found_existing) {
-            // Clear existing data
-            std.debug.print("Previous wave data existed for sample rate: {d}, clearing and regenerating...\n", .{sample_rate});
-            for (wave_data.items) |sample_list| {
-                sample_list.deinit();
-            }
-            wave_data.clearAndFree();
-        }
-        wave_data.* = .init(self.allocator);
-
-        const subtables_len = (128 / new_table_period);
-        const subtables: []std.ArrayList(f64) = try wave_data.addManyAsSlice(subtables_len);
-        for (0..subtables_len) |i| {
-            const key: i16 = @intCast(i * new_table_period);
+        const waveshape_type: Wave = @enumFromInt(field.value);
+        const waveshape_index: usize = @intCast(field.value - 1);
+        var table_data = &table[waveshape_index];
+        for (0..table_count) |table_index| {
+            var sample_data = &table_data[table_index];
+            // TODO: Ensure the key at the upper bound of this doesn't produce harmonics that exceed the nyquist
+            const key: i16 = @intCast(table_index * half_steps_per_table);
             const frequency = getFrequency(key);
-            var subtable = &subtables[i];
-            subtable.* = .init(self.allocator);
-
-            const num_samples: usize = @intFromFloat(std.math.ceil(sample_rate / frequency));
-            var sample_slice: []f64 = try subtable.addManyAsSlice(num_samples);
-            for (0..num_samples) |sample_i| {
-                const t: f64 = @floatFromInt(sample_i);
-                const wave_value: f64 = generate(wave_type, sample_rate, frequency, t);
-                sample_slice[sample_i] = wave_value;
+            for (0..sample_count) |sample_index| {
+                const phase: f64 = @as(f64, @floatFromInt(sample_index)) / @as(f64, @floatFromInt(sample_count));
+                sample_data[sample_index] = generate(waveshape_type, sample_rate, frequency, phase);
             }
         }
     }
-
-    std.debug.print("Wave table generation complete.\n", .{});
+    return table;
 }
 
-pub fn get(self: *const Waves, wave_type: Wave, sample_rate: f64, key: i16, frames: f64) f64 {
+pub var wave_table: WaveTable = undefined;
+comptime {
+    if (comptime_wave_table) {
+        wave_table = generate_wave_table();
+    }
+}
+
+pub const Wave = enum(u32) {
+    Sine = 1,
+    Saw = 2,
+    Triangle = 3,
+    Square = 4,
+};
+
+pub inline fn getFrequency(key: i16) f64 {
+    return 440.0 * std.math.exp2((@as(f64, @floatFromInt(key)) - 57.0) / 12.0);
+}
+
+pub inline fn get(wave_type: Wave, sample_rate: f64, key: i16, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
         return -1;
     }
 
-    const sample_rate_i: i32 = @intFromFloat(sample_rate);
-    if (!self.tables.contains(sample_rate_i)) {
-        std.debug.panic("Attempted to get wavetable that has not yet been generated!", .{});
-        return -1;
-    }
-
-    const subtable_index: usize = @intCast(@divFloor(key, new_table_period));
-    const wave_table: WaveTable = self.tables.get(sample_rate_i).?;
-    const tables = wave_table.get(wave_type).?;
-    const subtable: std.ArrayList(f64) = tables.items[subtable_index];
+    const table_index: usize = @intCast(@divFloor(key, half_steps_per_table));
+    const waveshape_index: usize = @intFromEnum(wave_type) - 1;
+    const sample_data = &wave_table[waveshape_index][table_index];
 
     const frequency = getFrequency(key);
-    const index: usize = indexFromT(frames, sample_rate, frequency);
 
-    // This won't work for most frequencies until I add interpolation
-    return subtable.items[index];
+    const phase: f64 = @mod((frequency / sample_rate) * frames, 1.0);
+
+    const period_length: f64 = @floatFromInt(sample_count);
+    const index_f: f64 = @mod(period_length * phase, period_length); // Mod it just incase phase was exactly 1.00
+    const index_l: usize = @intFromFloat(index_f);
+    const index_r: usize = @mod(@as(usize, @intFromFloat(std.math.ceil(index_f))), sample_count);
+
+    // If our index was an integer value to begin with, no need to interpolate
+    if (index_l == index_r) {
+        return sample_data[index_l];
+    }
+
+    // Otherwise linear interpolate between the two closest integer indices to the non-integer index
+    const weight: f64 = index_f - std.math.floor(index_f);
+    return (sample_data[index_r] * weight) + (sample_data[index_l] * (1.0 - weight));
 }
 
-pub fn generate(wave_type: Wave, sample_rate: f64, frequency: f64, t: f64) f64 {
+pub inline fn generate(wave_type: Wave, sample_rate: f64, frequency: f64, phase: f64) f64 {
     switch (wave_type) {
         Wave.Sine => {
-            return generate_sine(sample_rate, frequency, t);
+            return generate_sine(sample_rate, frequency, phase);
         },
         Wave.Saw => {
-            return generate_saw(sample_rate, frequency, t);
+            return generate_saw(sample_rate, frequency, phase);
         },
         Wave.Triangle => {
-            return generate_triangle(sample_rate, frequency, t);
+            return generate_triangle(sample_rate, frequency, phase);
         },
         Wave.Square => {
-            return generate_square(sample_rate, frequency, t);
+            return generate_square(sample_rate, frequency, phase);
         },
     }
 }
 
-fn generate_sine(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
+pub inline fn generate_naive(wave_type: Wave, phase: f64) f64 {
+    switch (wave_type) {
+        Wave.Sine => {
+            return naive_sine(phase);
+        },
+        Wave.Saw => {
+            return naive_saw(phase);
+        },
+        Wave.Triangle => {
+            return naive_triangle(phase);
+        },
+        Wave.Square => {
+            return naive_square(phase);
+        },
+    }
+}
+
+pub inline fn naive_sine(phase: f64) f64 {
     return std.math.sin(phase * 2.0 * std.math.pi);
 }
 
-fn naive_saw(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
+pub inline fn naive_saw(phase: f64) f64 {
     return 2.0 * (phase - std.math.floor(phase + 0.5));
 }
 
-fn generate_saw(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
-    const nyquist = sample_rate / 4;
+pub inline fn naive_square(phase: f64) f64 {
+    return if (phase > 0.5) -1 else 1;
+}
+
+pub inline fn naive_triangle(phase: f64) f64 {
+    return 4 * @abs(@mod(phase - 0.25, 1.0) - 0.5) - 1;
+}
+
+pub inline fn generate_sine(_: f64, _: f64, phase: f64) f64 {
+    // Sine just uses naive all the time
+    return naive_sine(phase);
+}
+
+pub inline fn generate_saw(sample_rate: f64, frequency: f64, phase: f64) f64 {
+    const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     while (n * frequency < nyquist) : (n += 1) {
@@ -207,14 +165,8 @@ fn generate_saw(sample_rate: f64, frequency: f64, t: f64) f64 {
     return wave * (-2.0 / std.math.pi);
 }
 
-fn naive_square(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
-    return if (phase > 0.5) -1 else 1;
-}
-
-fn generate_square(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
-    const nyquist = sample_rate / 4;
+pub inline fn generate_square(sample_rate: f64, frequency: f64, phase: f64) f64 {
+    const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     var k = (2 * n) - 1;
@@ -227,18 +179,8 @@ fn generate_square(sample_rate: f64, frequency: f64, t: f64) f64 {
     return wave;
 }
 
-fn abs(x: f64) f64 {
-    return if (x < 0) x * -1 else x;
-}
-
-fn naive_triangle(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
-    return 4 * abs(@mod(phase - 0.25, 1.0) - 0.5) - 1;
-}
-
-fn generate_triangle(sample_rate: f64, frequency: f64, t: f64) f64 {
-    const phase = (frequency / sample_rate) * t;
-    const nyquist = sample_rate / 4;
+pub inline fn generate_triangle(sample_rate: f64, frequency: f64, phase: f64) f64 {
+    const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     var k = (2 * n) - 1;
@@ -249,9 +191,10 @@ fn generate_triangle(sample_rate: f64, frequency: f64, t: f64) f64 {
     return wave * (-8.0 / (std.math.pi * std.math.pi));
 }
 
-const WaveFunction = *const fn (sample_rate: f64, frequency: f64, t: f64) f64;
+pub const NaiveWaveFunction = *const fn (phase: f64) callconv(.@"inline") f64;
+pub const WaveFunction = *const fn (sample_rate: f64, frequency: f64, phase: f64) callconv(.@"inline") f64;
 
-fn test_wave_functions(ideal_wave: WaveFunction, generated_wave: WaveFunction) !void {
+fn test_wave_functions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFunction) !void {
     const epsilon: f64 = 0.1; // Within 10% accuracy from the real thing
     const sample_rate: f64 = 48000;
 
@@ -263,11 +206,10 @@ fn test_wave_functions(ideal_wave: WaveFunction, generated_wave: WaveFunction) !
         // Test at discrete subdivisions
         for (1..subdivisions) |j| {
             const phase: f64 = @as(f64, @floatFromInt(j)) / @as(f64, @floatFromInt(subdivisions));
-            const t = (phase * sample_rate) / frequency;
             // Edge case where the generated wave will be 0 here, because it has to manually cross the axis instead of
             // teleporting across like the ideal
-            const ideal = if (phase == 0.5) 0 else ideal_wave(sample_rate, frequency, t);
-            const generated = generated_wave(sample_rate, frequency, t);
+            const ideal = if (phase == 0.5) 0 else ideal_wave(phase);
+            const generated = generated_wave(sample_rate, frequency, phase);
 
             const approx_eq = std.math.approxEqAbs(f64, ideal, generated, epsilon);
             if (!approx_eq) {
@@ -294,158 +236,4 @@ test "Square function accuracy" {
 
 test "Triangle function accuracy" {
     try test_wave_functions(naive_triangle, generate_triangle);
-}
-
-// Provide a main function for plotting... scheming...
-const zigplotlib = @import("plotlib");
-const SVG = zigplotlib.SVG;
-
-const rgb = zigplotlib.rgb;
-const Range = zigplotlib.Range;
-
-const Figure = zigplotlib.Figure;
-const Line = zigplotlib.Line;
-const ShapeMarker = zigplotlib.ShapeMarker;
-
-const SMOOTHING = 0.2;
-
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const frequency: f64 = 440;
-    const sample_rate: f64 = 48000;
-    const steps: usize = @intFromFloat(sample_rate / frequency);
-
-    {
-        var x: [steps]f32 = undefined;
-        var sine_y: [steps]f32 = undefined;
-        var saw_y: [steps]f32 = undefined;
-        var triangle_y: [steps]f32 = undefined;
-        var square_y: [steps]f32 = undefined;
-        for (0..steps) |i| {
-            const t: f64 = @floatFromInt(i);
-            x[i] = @floatCast(t * (frequency / sample_rate));
-            sine_y[i] = @floatCast(generate_sine(sample_rate, frequency, t));
-            saw_y[i] = @floatCast(generate_saw(sample_rate, frequency, t));
-            triangle_y[i] = @floatCast(generate_triangle(sample_rate, frequency, t));
-            square_y[i] = @floatCast(generate_square(sample_rate, frequency, t));
-        }
-
-        var generated_figure = Figure.init(allocator, .{
-            .value_padding = .{
-                .x_min = .{ .value = 1.0 },
-                .x_max = .{ .value = 1.0 },
-            },
-            .axis = .{
-                .x_range = .{ .min = 0.0, .max = 1.0 },
-                .y_range = .{ .min = -1.0, .max = 1.0 },
-                .show_y_axis = false,
-            },
-        });
-        defer generated_figure.deinit();
-
-        try generated_figure.addPlot(Line{ .x = &x, .y = &sine_y, .style = .{
-            .color = rgb.BLUE,
-            .width = 2.0,
-            .smooth = SMOOTHING,
-        } });
-        try generated_figure.addPlot(Line{ .x = &x, .y = &saw_y, .style = .{
-            .color = rgb.GREEN,
-            .width = 2.0,
-            .smooth = SMOOTHING,
-        } });
-        try generated_figure.addPlot(Line{ .x = &x, .y = &triangle_y, .style = .{
-            .color = rgb.RED,
-            .width = 2.0,
-            .smooth = SMOOTHING,
-        } });
-        try generated_figure.addPlot(Line{ .x = &x, .y = &square_y, .style = .{
-            .color = rgb.ORANGE,
-            .width = 2.0,
-            .smooth = SMOOTHING,
-        } });
-
-        var svg = try generated_figure.show();
-        defer svg.deinit();
-
-        // Write to an output file (out.svg)
-        std.debug.print("Generating all waves...\n", .{});
-        var file = try std.fs.cwd().createFile("waves/All.svg", .{});
-        defer file.close();
-        try svg.writeTo(file.writer());
-    }
-
-    inline for (std.meta.fields(Wave)) |field| {
-        const wave_type: Wave = @enumFromInt(field.value);
-
-        var ideal_wave: WaveFunction = undefined;
-        var generated_wave: WaveFunction = undefined;
-        switch (wave_type) {
-            Wave.Saw => {
-                ideal_wave = naive_saw;
-                generated_wave = generate_saw;
-            },
-            Wave.Square => {
-                ideal_wave = naive_square;
-                generated_wave = generate_square;
-            },
-            Wave.Triangle => {
-                ideal_wave = naive_triangle;
-                generated_wave = generate_triangle;
-            },
-            Wave.Sine => {
-                ideal_wave = generate_sine;
-                generated_wave = generate_sine;
-            },
-        }
-
-        var x: [steps]f32 = undefined;
-        var ideal_y: [steps]f32 = undefined;
-        var generated_y: [steps]f32 = undefined;
-        for (0..steps) |i| {
-            const t: f64 = @floatFromInt(i);
-            x[i] = @floatCast(t * (frequency / sample_rate));
-            ideal_y[i] = @floatCast(ideal_wave(sample_rate, frequency, t));
-            generated_y[i] = @floatCast(generated_wave(sample_rate, frequency, t));
-        }
-
-        var generated_figure = Figure.init(allocator, .{
-            .value_padding = .{
-                .x_min = .{ .value = 1.0 },
-                .x_max = .{ .value = 1.0 },
-            },
-            .axis = .{
-                .x_range = .{ .min = 0.0, .max = 1.0 },
-                .y_range = .{ .min = -1.0, .max = 1.0 },
-                .show_y_axis = false,
-            },
-        });
-        defer generated_figure.deinit();
-
-        try generated_figure.addPlot(Line{ .x = &x, .y = &generated_y, .style = .{
-            .color = rgb.RED,
-            .width = 2.0,
-            .smooth = SMOOTHING,
-        } });
-
-        try generated_figure.addPlot(Line{ .x = &x, .y = &ideal_y, .style = .{
-            .color = rgb.BLACK,
-            .width = 1.0,
-            .dash = 4.0,
-            .smooth = SMOOTHING,
-        } });
-
-        var svg = try generated_figure.show();
-        defer svg.deinit();
-
-        // Write to an output file
-        std.debug.print("Generating {s}.svg\n", .{field.name});
-        var file_name_buf: [128]u8 = undefined;
-        const file_name = try std.fmt.bufPrint(&file_name_buf, "waves/{s}.svg", .{field.name});
-        var file = try std.fs.cwd().createFile(file_name, .{});
-        defer file.close();
-        try svg.writeTo(file.writer());
-    }
 }
