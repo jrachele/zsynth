@@ -1,6 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const audio = @import("audio.zig");
+const Voice = audio.Voice;
+
 // TODO: Eventually implement wave tables for each sample
 const SampleRate = i32;
 const supported_sample_rates = [_]SampleRate{ 8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000 };
@@ -40,7 +43,7 @@ pub inline fn generate_wave_table() WaveTable {
         for (0..table_count) |table_index| {
             var sample_data = &table_data[table_index];
             // TODO: Ensure the key at the upper bound of this doesn't produce harmonics that exceed the nyquist
-            const key: i16 = @intCast(table_index * half_steps_per_table);
+            const key: f64 = @floatFromInt(table_index * half_steps_per_table);
             const frequency = getFrequency(key);
             for (0..sample_count) |sample_index| {
                 const phase: f64 = @as(f64, @floatFromInt(sample_index)) / @as(f64, @floatFromInt(sample_count));
@@ -62,17 +65,19 @@ pub const Wave = enum(u32) {
     Square = 4,
 };
 
-pub inline fn getFrequency(key: i16) f64 {
-    return 440.0 * std.math.exp2((@as(f64, @floatFromInt(key)) - 57.0) / 12.0);
+pub inline fn getFrequency(key: f64) f64 {
+    return 440.0 * std.math.exp2((key - 57.0) / 12.0);
 }
 
-pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: i16, frames: f64) f64 {
+pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, voice: *const Voice, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
         return -1;
     }
 
-    const table_index: usize = @intCast(@divFloor(key, half_steps_per_table));
+    const key: f64 = @as(f64, @floatFromInt(voice.key)) + voice.expression_values.get(.tuning);
+
+    const table_index: usize = @intFromFloat(key / @as(f64, @floatFromInt(half_steps_per_table)));
     const waveshape_index: usize = @intFromEnum(wave_type) - 1;
     const sample_data = &wave_table[waveshape_index][table_index];
 
@@ -194,7 +199,7 @@ fn test_wave_functions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFuncti
     const sample_rate: f64 = 48000;
 
     for (0..87) |i| {
-        const key: i16 = @intCast(i);
+        const key: f64 = @floatFromInt(i);
         const frequency = getFrequency(key);
 
         const subdivisions = 10;

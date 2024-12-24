@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
             },
         );
 
+        exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
         const zigplotlib = b.dependency("zigplotlib", .{
             .target = target,
             .optimize = optimize,

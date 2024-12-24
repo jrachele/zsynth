@@ -2,7 +2,9 @@ const builtin = @import("builtin");
 const std = @import("std");
 const zigplotlib = @import("plotlib");
 
+const audio = @import("audio/audio.zig");
 const waves = @import("audio/waves.zig");
+const Voice = audio.Voice;
 const Wave = waves.Wave;
 
 const SVG = zigplotlib.SVG;
@@ -114,6 +116,9 @@ pub fn main() !void {
             },
         }
 
+        const voice: Voice = .{
+            .key = key,
+        };
         var x: [steps]f32 = undefined;
         var ideal_y: [steps]f32 = undefined;
         var generated_y: [steps]f32 = undefined;
@@ -124,7 +129,7 @@ pub fn main() !void {
             x[i] = @floatCast(phase);
             ideal_y[i] = @floatCast(ideal_wave(phase));
             generated_y[i] = @floatCast(generated_wave(sample_rate, frequency, phase));
-            wave_table_y[i] = @floatCast(waves.get(&wave_table, wave_type, sample_rate, key, t));
+            wave_table_y[i] = @floatCast(waves.get(&wave_table, wave_type, sample_rate, &voice, t));
         }
 
         var generated_figure = Figure.init(allocator, .{
