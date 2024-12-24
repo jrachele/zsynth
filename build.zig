@@ -15,6 +15,12 @@ pub fn build(b: *std.Build) void {
         "Generate and embed the wavetables at compile time. Will significantly impact compile times, but will reduce initial plugin start time.",
     ) orelse false;
 
+    const wait_for_debugger = b.option(
+        bool,
+        "wait_for_debugger",
+        "Stall when creating a plugin from the factory until a debugger mutates wait variable",
+    ) orelse false;
+
     const lib = b.addSharedLibrary(
         .{
             .name = "zsynth",
@@ -30,6 +36,7 @@ pub fn build(b: *std.Build) void {
 
     var options = Step.Options.create(b);
     options.addOption(bool, "generate_wavetables_comptime", generate_wavetables_comptime);
+    options.addOption(bool, "wait_for_debugger", wait_for_debugger);
     lib.root_module.addOptions("options", options);
 
     // if (gui_supported) {

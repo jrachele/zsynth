@@ -153,13 +153,13 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
                 .name = undefined,
                 .flags = .{
                     .is_stepped = true,
-                    .is_automatable = true,
+                    .is_automatable = builtin.mode == .Debug,
                     .is_hidden = builtin.mode != .Debug,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool1)),
                 .module = undefined,
             };
-            std.mem.copyForwards(u8, &info.name, "Use Wave Table");
+            std.mem.copyForwards(u8, &info.name, "Bool1");
             std.mem.copyForwards(u8, &info.module, "Debug/Bool1");
         },
         Parameter.DebugBool2 => {
@@ -171,7 +171,7 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
                 .name = undefined,
                 .flags = .{
                     .is_stepped = true,
-                    .is_automatable = true,
+                    .is_automatable = builtin.mode == .Debug,
                     .is_hidden = builtin.mode != .Debug,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool2)),
@@ -330,9 +330,11 @@ fn flush(
     _: *const clap.events.OutputEvents,
 ) callconv(.C) void {
     const self = Plugin.fromPlugin(plugin);
-    var i: u32 = 0;
-    while (i < events.size(events)) : (i += 1) {
-        const event = events.get(events, i);
+    for (0..events.size(events)) |i| {
+        const event = events.get(events, @intCast(i));
+        if (event.space_id != clap.events.core_space_id) {
+            continue;
+        }
         if (event.type == .param_value) {
             const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
             const index = @intFromEnum(param_event.param_id);

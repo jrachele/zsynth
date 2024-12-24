@@ -6,40 +6,87 @@ const Plugin = @import("../plugin.zig");
 
 pub fn create() clap.extensions.state.Plugin {
     return .{
-        .save = save,
-        .load = load,
+        .save = _save,
+        .load = _load,
     };
 }
 
 // Frankly shocking how nice Zig makes this
-fn save(plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
-    std.debug.print("Saving plugin state...\n", .{});
+fn _save(plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
+    std.log.debug("Saving plugin state...", .{});
     const self = Plugin.fromPlugin(plugin);
-    const str = std.json.stringifyAlloc(self.allocator, self.params, .{}) catch return false;
-    std.debug.print("Plugin data saved: {s}\n", .{str});
+    const str = std.json.stringifyAlloc(self.allocator, self.params.values, .{}) catch return false;
+    std.log.debug("Plugin data saved: {s}", .{str});
     defer self.allocator.free(str);
 
-    return stream.write(stream, str.ptr, str.len) == str.len;
+    var total_bytes_written = stream.write(stream, str.ptr, str.len);
+    while (total_bytes_written < str.len) {
+        const bytes: usize = @intCast(total_bytes_written);
+        total_bytes_written += stream.write(stream, str.ptr + bytes, str.len - bytes);
+    }
+
+    return total_bytes_written == str.len;
 }
 
-fn load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
-    std.debug.print("Loading plugin state...\n", .{});
+fn _load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
+    std.log.debug("State._load called from plugin host", .{});
     const self = Plugin.fromPlugin(plugin);
+
+    var param_data_buf = std.ArrayList(u8).init(self.allocator);
+    defer param_data_buf.deinit();
+
     const MAX_BUF_SIZE = 1024; // this is entirely arbitrary.
     var buf: [MAX_BUF_SIZE]u8 = undefined;
-    const bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
-    if (bytes_read < 0) return false;
-    const bytes: usize = @intCast(bytes_read);
-    std.debug.print("Plugin data loaded: {s}\n", .{buf[0..bytes]});
-    const params_obj = std.json.parseFromSlice(Params.ParamValues, self.allocator, buf[0..bytes], .{
+    var bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
+    if (bytes_read <= 0) {
+        std.log.err("Clap IStream Read Error or EOF on first read!", .{});
+        return false;
+    }
+
+    while (bytes_read > 0) {
+        // Append to the current working buffer
+        const bytes: usize = @intCast(bytes_read);
+        param_data_buf.appendSlice(buf[0..bytes]) catch {
+            std.log.err("Unable to append state data from plugin host to param data buffer.", .{});
+            return false;
+        };
+
+        // Read some more data in
+        bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
+    }
+
+    const params = createParamsFromBuffer(self.allocator, param_data_buf.items);
+    if (params == null) {
+        std.log.err("Unable to create params from the active state buffer! {s}", .{param_data_buf.items});
+        return false;
+    }
+
+    // Mutate the overall plugin params now that they are properly loaded
+    self.params = params.?;
+    return true;
+}
+// Load the JSON state from a complete buffer.
+fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.ParamValues {
+    const params_data = std.json.parseFromSlice([]f64, allocator, buffer, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
-        std.debug.print("Error loading parameters: {}\n", .{err});
-        self.params = Params.ParamValues.init(Params.param_defaults);
-        return true;
+        std.log.err("Error loading parameters: {}", .{err});
+        return null;
     };
-    defer params_obj.deinit();
+    defer params_data.deinit();
 
-    self.params = params_obj.value;
-    return true;
+    var params = Params.ParamValues.init(Params.param_defaults);
+    if (Params.param_count != params_data.value.len) {
+        std.log.warn("Parameter count {d} does not match length of previously saved parameter data {d}", .{ Params.param_count, params_data.value.len });
+    }
+    for (params_data.value, 0..) |param, i| {
+        if (i >= Params.param_count) break;
+        const param_type = std.meta.intToEnum(Params.Parameter, i) catch |err| {
+            std.log.err("Error creating parameter: {}", .{err});
+            return null;
+        };
+        params.set(param_type, param);
+    }
+
+    return params;
 }

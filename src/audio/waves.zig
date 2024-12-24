@@ -1,5 +1,3 @@
-const Waves = @This();
-
 const builtin = @import("builtin");
 const std = @import("std");
 
@@ -25,7 +23,7 @@ comptime {
         @compileError("half_steps_per_table must be a divisor of 128!");
     }
 }
-const WaveTable = [waveshape_count][table_count][sample_count]f64;
+pub const WaveTable = [waveshape_count][table_count][sample_count]f64;
 
 pub inline fn generate_wave_table() WaveTable {
     @setEvalBranchQuota(std.math.maxInt(u32));
@@ -35,6 +33,9 @@ pub inline fn generate_wave_table() WaveTable {
     inline for (std.meta.fields(Wave)) |field| {
         const waveshape_type: Wave = @enumFromInt(field.value);
         const waveshape_index: usize = @intCast(field.value - 1);
+        if (!@inComptime()) {
+            std.log.debug("Generating data for wave type: {}", .{waveshape_type});
+        }
         var table_data = &table[waveshape_index];
         for (0..table_count) |table_index| {
             var sample_data = &table_data[table_index];
@@ -47,10 +48,12 @@ pub inline fn generate_wave_table() WaveTable {
             }
         }
     }
+
+    if (!@inComptime()) {
+        std.log.debug("Done generating wave table.", .{});
+    }
     return table;
 }
-
-pub var wave_table: WaveTable = undefined;
 
 pub const Wave = enum(u32) {
     Sine = 1,
@@ -63,7 +66,7 @@ pub inline fn getFrequency(key: i16) f64 {
     return 440.0 * std.math.exp2((@as(f64, @floatFromInt(key)) - 57.0) / 12.0);
 }
 
-pub inline fn get(wave_type: Wave, sample_rate: f64, key: i16, frames: f64) f64 {
+pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: i16, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
         return -1;
@@ -205,7 +208,7 @@ fn test_wave_functions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFuncti
 
             const approx_eq = std.math.approxEqAbs(f64, ideal, generated, epsilon);
             if (!approx_eq) {
-                std.debug.print("Not approx eq: {d} {d} {d} at frequency {d} and phase {d}", .{
+                std.log.debug("Not approx eq: {d} {d} {d} at frequency {d} and phase {d}", .{
                     ideal,
                     generated,
                     epsilon,

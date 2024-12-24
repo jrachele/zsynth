@@ -28,6 +28,8 @@ pub fn main() !void {
     const key: i16 = 77;
     const frequency: f64 = waves.getFrequency(key);
 
+    const wave_table = waves.generate_wave_table();
+
     const steps: usize = @intFromFloat(sample_rate / frequency);
     {
         var x: [steps]f32 = undefined;
@@ -82,7 +84,7 @@ pub fn main() !void {
         defer svg.deinit();
 
         // Write to an output file (out.svg)
-        std.debug.print("Generating all waves...\n", .{});
+        std.log.debug("Generating all waves...", .{});
         var file = try std.fs.cwd().createFile("waves/All.svg", .{});
         defer file.close();
         try svg.writeTo(file.writer());
@@ -122,7 +124,7 @@ pub fn main() !void {
             x[i] = @floatCast(phase);
             ideal_y[i] = @floatCast(ideal_wave(phase));
             generated_y[i] = @floatCast(generated_wave(sample_rate, frequency, phase));
-            wave_table_y[i] = @floatCast(waves.get(wave_type, sample_rate, key, t));
+            wave_table_y[i] = @floatCast(waves.get(&wave_table, wave_type, sample_rate, key, t));
         }
 
         var generated_figure = Figure.init(allocator, .{
@@ -158,7 +160,7 @@ pub fn main() !void {
         defer svg.deinit();
 
         // Write to an output file
-        std.debug.print("Generating {s}.svg\n", .{field.name});
+        std.log.debug("Generating {s}.svg", .{field.name});
         var file_name_buf: [128]u8 = undefined;
         const file_name = try std.fmt.bufPrint(&file_name_buf, "waves/{s}.svg", .{field.name});
         var file = try std.fs.cwd().createFile(file_name, .{});
@@ -174,5 +176,5 @@ test "Multi arrays" {
 
     var layer2 = &layer1[0];
     layer2[2] = 2312321313;
-    std.debug.print("{any}\n", .{data});
+    std.log.debug("{any}", .{data});
 }

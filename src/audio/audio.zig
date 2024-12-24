@@ -48,7 +48,7 @@ pub fn processNoteChanges(self: *Plugin, event: *const clap.events.Header) void 
                 };
 
                 self.voices.append(voice) catch {
-                    std.debug.print("Unable to append voice!\n", .{});
+                    std.log.err("Unable to append voice!", .{});
                     return;
                 };
             } else {
@@ -92,15 +92,9 @@ pub fn renderAudio(self: *Plugin, start: u32, end: u32, output_left: [*]f32, out
         for (self.voices.items) |*voice| {
             var wave: f64 = undefined;
             const t: f64 = @floatFromInt(voice.elapsed_frames);
-            if (self.params.get(Parameter.DebugBool1) == 0.0) {
-                // If this is true, the wave table should be subverted and the wave will be generated on the spot
-                const frequency = waves.getFrequency(voice.key);
-                const phase = (frequency / self.sample_rate.?) * t;
-                wave = waves.generate(wave_type, self.sample_rate.?, frequency, phase);
-            } else {
-                // Otherwise, retrieve the wave data from the pre-calculated table
-                wave = waves.get(wave_type, self.sample_rate.?, voice.key, t);
-            }
+
+            // retrieve the wave data from the pre-calculated table
+            wave = waves.get(&self.wave_table, wave_type, self.sample_rate.?, voice.key, t);
 
             // Elapse the voice time by a frame and update envelope
             voice.elapsed_frames += 1;

@@ -1,4 +1,7 @@
 const std = @import("std");
+const options = @import("options");
+const builtin = @import("builtin");
+
 const clap = @import("clap-bindings");
 
 const Plugin = @import("plugin.zig");
@@ -14,16 +17,22 @@ const ClapEntry = struct {
     }
 
     fn _init(plugin_path: [*:0]const u8) callconv(.c) bool {
+        if (builtin.mode == .Debug) {
+            var wait: bool = options.wait_for_debugger;
+            const debuggerMutate: *volatile bool = &wait;
+            while (debuggerMutate.*) {}
+        }
+
         gpa = .{};
-        std.debug.print("Plugin initialized with path {s}\n", .{plugin_path});
+        std.log.debug("Plugin initialized with path {s}", .{plugin_path});
         return true;
     }
 
     fn _deinit() callconv(.c) void {
-        std.debug.print("Plugin deinitialized\n", .{});
+        std.log.debug("Plugin deinitialized", .{});
         switch (gpa.deinit()) {
             std.heap.Check.leak => {
-                std.debug.print("Leaks happened!\n", .{});
+                std.log.debug("Leaks happened!", .{});
             },
             else => {},
         }
@@ -35,7 +44,7 @@ const ClapEntry = struct {
         if (std.mem.eql(u8, std.mem.span(factory_id), ClapPluginFactoryId)) {
             return &plugin_factory;
         }
-        std.debug.print("factory_id: {s} \n", .{factory_id});
+        std.log.debug("factory_id: {s} ", .{factory_id});
         return null;
     }
 };
@@ -53,7 +62,7 @@ const ClapFactory = struct {
     }
     /// retrieve a plugin descriptor by its index. returns null in case of error. the descriptor must not be freed.
     fn _getPluginDescriptor(_: *const clap.PluginFactory, index: u32) callconv(.C) ?*const clap.Plugin.Descriptor {
-        std.debug.print("getPluginDescriptor invoked\n", .{});
+        std.log.debug("getPluginDescriptor invoked", .{});
         if (index == 0) {
             return &Plugin.desc;
         }
@@ -72,12 +81,12 @@ const ClapFactory = struct {
         }
 
         if (!std.mem.eql(u8, std.mem.span(plugin_id), std.mem.span(Plugin.desc.id))) {
-            std.debug.print("Mismatched plugin id: {s}; descriptor id: {s}", .{ plugin_id, Plugin.desc.id });
+            std.log.debug("Mismatched plugin id: {s}; descriptor id: {s}", .{ plugin_id, Plugin.desc.id });
             return null;
         }
 
         const plugin = Plugin.create(host, gpa.allocator()) catch {
-            std.debug.print("Error allocating plugin!\n", .{});
+            std.log.debug("Error allocating plugin!", .{});
             return null;
         };
 
