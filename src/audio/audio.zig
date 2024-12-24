@@ -76,6 +76,9 @@ fn getOrCreateVoice(plugin: *Plugin, event: *const clap.events.Header) !*Voice {
             (voice.key == new_voice.key or new_voice.key == -1) and
             (voice.noteId == new_voice.noteId or new_voice.noteId == -1))
         {
+            if (new_voice.noteId != -1) {
+                voice.noteId = new_voice.noteId;
+            }
             return voice;
         }
     }
@@ -128,12 +131,6 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
     }
 }
 
-fn clamp1(f: f64) f64 {
-    if (f < 0) return 0;
-    if (f > 1) return 1;
-    return f;
-}
-
 pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
     const wave_value: u32 = @intFromFloat(plugin.params.get(Parameter.WaveShape));
     const wave_type: Wave = std.meta.intToEnum(Wave, wave_value) catch Wave.Sine;
@@ -142,6 +139,7 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
     while (index < end) : (index += 1) {
         var voice_sum_l: f64 = 0;
         var voice_sum_r: f64 = 0;
+        var voice_sum_mono: f64 = 0;
         for (plugin.voices.items) |*voice| {
             var wave: f64 = undefined;
             const t: f64 = @floatFromInt(voice.elapsed_frames);
@@ -153,15 +151,24 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
             voice.elapsed_frames += 1;
 
             const pan = voice.expression_values.get(Expression.pan);
-            voice_sum_l += wave * voice.adsr.value * voice.velocity * voice.expression_values.get(Expression.volume) * (1 - pan);
-            voice_sum_r += wave * voice.adsr.value * voice.velocity * voice.expression_values.get(Expression.volume) * pan;
+            voice_sum_mono += wave * voice.adsr.value * voice.velocity * voice.expression_values.get(Expression.volume);
+            voice_sum_l += voice_sum_mono * (1 - pan);
+            voice_sum_r += voice_sum_mono * pan;
 
             const dt = (1 / plugin.sample_rate.?) * 1000;
             voice.adsr.update(dt);
         }
+
         const output_l: f32 = @floatCast(voice_sum_l);
         const output_r: f32 = @floatCast(voice_sum_r);
         output_left[index] = output_l;
         output_right[index] = output_r;
+
+        // If we have reached a point where the audio level is close enough to 0, process events in the queue
+        if (std.math.approxEqAbs(f64, voice_sum_mono, 0.0, 0.1)) {
+            while (plugin.event_queue.popOrNull()) |event| {
+                processNoteChanges(plugin, event);
+            }
+        }
     }
 }

@@ -19,6 +19,7 @@ host: *const clap.Host,
 voices: std.ArrayList(Voice),
 params: Params.ParamValues,
 wave_table: waves.WaveTable,
+event_queue: std.ArrayList(*const clap.events.Header),
 
 jobs: MainThreadJobs = .{},
 
@@ -46,16 +47,21 @@ pub fn fromPlugin(plugin: *const clap.Plugin) *@This() {
 }
 
 pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
+    // Heap objects
     const plugin = try allocator.create(@This());
-    const param_values = Params.ParamValues.init(Params.param_defaults);
     var voices = std.ArrayList(Voice).init(allocator);
+    var event_queue = std.ArrayList(*const clap.events.Header).init(allocator);
+    errdefer voices.deinit();
+    errdefer event_queue.deinit();
+    errdefer allocator.destroy(plugin);
+
+    // Stack objects
+    const param_values = Params.ParamValues.init(Params.param_defaults);
     const wave_table = if (options.generate_wavetables_comptime)
         comptime waves.generate_wave_table()
     else
         waves.generate_wave_table();
 
-    errdefer voices.deinit();
-    errdefer allocator.destroy(plugin);
     plugin.* = .{
         .allocator = allocator,
         .plugin = .{
@@ -76,6 +82,7 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         .voices = voices,
         .params = param_values,
         .wave_table = wave_table,
+        .event_queue = event_queue,
     };
 
     return &plugin.plugin;
@@ -91,6 +98,7 @@ fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Plugin destroyed!", .{});
     var self = fromPlugin(plugin);
     self.voices.deinit();
+    self.event_queue.deinit();
     self.allocator.destroy(self);
 }
 
@@ -128,6 +136,7 @@ fn _reset(plugin: *const clap.Plugin) callconv(.C) void {
     self.host.requestCallback(self.host);
 }
 
+// This occurs on the audio thread
 fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callconv(.C) clap.Process.Status {
     const self = fromPlugin(plugin);
     std.debug.assert(clap_process.audio_inputs_count == 0);
@@ -166,9 +175,13 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
                 break;
             }
 
-            // Process the event if it matches the current frame
+            // Append the event if it matches the current frame
             if (event.sample_offset == current_frame) {
-                audio.processNoteChanges(self, event);
+                self.event_queue.append(event) catch {
+                    std.log.err("Unable to append event!", .{});
+                    return clap.Process.Status.@"error";
+                };
+                // audio.processNoteChanges(self, event);
                 event_index += 1;
             }
         }
