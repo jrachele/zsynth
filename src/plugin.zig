@@ -19,7 +19,6 @@ host: *const clap.Host,
 voices: std.ArrayList(Voice),
 params: Params.ParamValues,
 wave_table: waves.WaveTable,
-event_queue: std.ArrayList(*const clap.events.Header),
 
 jobs: MainThreadJobs = .{},
 
@@ -50,9 +49,7 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
     // Heap objects
     const plugin = try allocator.create(@This());
     var voices = std.ArrayList(Voice).init(allocator);
-    var event_queue = std.ArrayList(*const clap.events.Header).init(allocator);
     errdefer voices.deinit();
-    errdefer event_queue.deinit();
     errdefer allocator.destroy(plugin);
 
     // Stack objects
@@ -82,7 +79,6 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         .voices = voices,
         .params = param_values,
         .wave_table = wave_table,
-        .event_queue = event_queue,
     };
 
     return &plugin.plugin;
@@ -98,7 +94,6 @@ fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Plugin destroyed!", .{});
     var self = fromPlugin(plugin);
     self.voices.deinit();
-    self.event_queue.deinit();
     self.allocator.destroy(self);
 }
 
@@ -177,11 +172,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 
             // Append the event if it matches the current frame
             if (event.sample_offset == current_frame) {
-                self.event_queue.append(event) catch {
-                    std.log.err("Unable to append event!", .{});
-                    return clap.Process.Status.@"error";
-                };
-                // audio.processNoteChanges(self, event);
+                audio.processNoteChanges(self, event);
                 event_index += 1;
             }
         }

@@ -69,19 +69,17 @@ pub inline fn getFrequency(key: f64) f64 {
     return 440.0 * std.math.exp2((key - 57.0) / 12.0);
 }
 
-pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, voice: *const Voice, frames: f64) f64 {
+pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: f64, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
         return -1;
     }
 
-    const key: f64 = @as(f64, @floatFromInt(voice.key)) + voice.expression_values.get(.tuning);
+    const frequency = getFrequency(key);
 
     const table_index: usize = @intFromFloat(key / @as(f64, @floatFromInt(half_steps_per_table)));
     const waveshape_index: usize = @intFromEnum(wave_type) - 1;
     const sample_data = &wave_table[waveshape_index][table_index];
-
-    const frequency = getFrequency(key);
 
     const phase: f64 = @mod((frequency / sample_rate) * frames, 1.0);
 
