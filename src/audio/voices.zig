@@ -15,20 +15,20 @@ const expression_values_default: std.enums.EnumFieldStruct(Expression, f64, null
 };
 
 pub const Voice = struct {
-    noteId: i32 = 0,
-    channel: i16 = 0,
-    key: i16 = 0,
+    noteId: clap.events.NoteId = .unspecified,
+    channel: clap.events.Channel = .unspecified,
+    key: clap.events.Key = .unspecified,
     velocity: f64 = 0,
     expression_values: ExpressionValues = ExpressionValues.init(expression_values_default),
     adsr: ADSR = ADSR.init(0, 0, 1, 0),
     elapsed_frames: u64 = 0,
 
     pub fn getTunedKey(self: *Voice) f64 {
-        return @as(f64, @floatFromInt(self.key)) + self.expression_values.get(.tuning);
+        return @as(f64, @floatFromInt(@intFromEnum(self.key))) + self.expression_values.get(.tuning);
     }
 };
 
-pub inline fn getVoiceByKey(voices: []Voice, key: i16) ?*Voice {
+pub inline fn getVoiceByKey(voices: []Voice, key: clap.events.Key) ?*Voice {
     for (voices) |*voice| {
         if (voice.key == key) {
             return voice;

@@ -2,7 +2,7 @@ const clap = @import("clap-bindings");
 const std = @import("std");
 
 // Audio Ports Extension
-pub fn create() clap.extensions.audio_ports.Plugin {
+pub fn create() clap.ext.audio_ports.Plugin {
     return .{
         .count = count,
         .get = get,
@@ -14,7 +14,7 @@ fn count(_: *const clap.Plugin, is_input: bool) callconv(.C) u32 {
     return if (is_input) 0 else 1;
 }
 /// get info about an audio port. returns true on success and stores the result into `info`.
-fn get(_: *const clap.Plugin, index: u32, is_input: bool, info: *clap.extensions.audio_ports.Info) callconv(.C) bool {
+fn get(_: *const clap.Plugin, index: u32, is_input: bool, info: *clap.ext.audio_ports.Info) callconv(.C) bool {
     var name_buf: [clap.name_capacity]u8 = undefined;
     if (is_input) {
         return false;

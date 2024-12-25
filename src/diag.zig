@@ -1,23 +1,23 @@
-const builtin = @import("builtin");
 const std = @import("std");
+const clap = @import("clap-bindings");
 
-const audio = @import("audio/audio.zig");
-const waves = @import("audio/waves.zig");
-const Voice = audio.Voice;
-const Wave = waves.Wave;
+const Plugin = @import("plugin.zig");
+const GUI = @import("ext/gui.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    // const allocator = gpa.allocator();
-}
+    const allocator = gpa.allocator();
 
-test "Multi arrays" {
-    var data: [1][2][3]f64 = undefined;
+    // Create a fake Plugin
+    // Create a bogus pointer because who cares anyway for this
+    const host = try allocator.create(clap.Host);
+    defer allocator.destroy(host);
 
-    var layer1 = &data[0];
+    const plugin = try Plugin.init(allocator, host);
+    defer plugin.deinit();
+    var gui = try GUI.init(allocator, plugin);
+    defer gui.deinit();
 
-    var layer2 = &layer1[0];
-    layer2[2] = 2312321313;
-    std.log.debug("{any}", .{data});
+    gui.uiLoop();
 }

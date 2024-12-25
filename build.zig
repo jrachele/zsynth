@@ -27,7 +27,12 @@ pub fn build(b: *std.Build) void {
     const zgui = b.dependency("zgui", .{
         .shared = false,
         .with_implot = true,
+        .backend = .glfw_opengl3,
     });
+    const zglfw = b.dependency("zglfw", .{
+        .shared = false,
+    });
+    const zopengl = b.dependency("zopengl", .{});
 
     const lib = b.addSharedLibrary(
         .{
@@ -38,38 +43,50 @@ pub fn build(b: *std.Build) void {
         },
     );
 
-    // Add CLAP headers
-    lib.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
-    lib.root_module.addImport("regex", regex.module("regex"));
-    lib.root_module.addImport("zgui", zgui.module("root"));
-    lib.linkLibrary(zgui.artifact("imgui"));
+    const exe = b.addExecutable(
+        .{
+            .name = "zsynth",
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = .{ .cwd_relative = "src/diag.zig" },
+        },
+    );
 
     // Allow options to be passed in to source files
     var options = Step.Options.create(b);
     options.addOption(bool, "generate_wavetables_comptime", generate_wavetables_comptime);
     options.addOption(bool, "wait_for_debugger", wait_for_debugger);
     options.addOption(bool, "gui_supported", gui_supported);
-    lib.root_module.addOptions("options", options);
 
+    // Something about this is very wrong...
+    const font_data = @embedFile("assets/Roboto-Medium.ttf");
+    var static_data = Step.Options.create(b);
+    static_data.addOption([]const u8, "font", font_data);
+    const build_targets = [_]*Step.Compile{ lib, exe };
+    for (build_targets) |pkg| {
+        // Libraries
+        pkg.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
+        pkg.root_module.addImport("regex", regex.module("regex"));
+
+        // GUI Related pkgraries
+        pkg.root_module.addImport("zgui", zgui.module("root"));
+        pkg.linkLibrary(zgui.artifact("imgui"));
+        pkg.root_module.addImport("zglfw", zglfw.module("root"));
+        pkg.linkLibrary(zglfw.artifact("glfw"));
+        pkg.root_module.addImport("zopengl", zopengl.module("root"));
+
+        pkg.root_module.addOptions("options", options);
+        pkg.root_module.addOptions("static_data", static_data);
+    }
+
+    // Specific steps for different targets
+    // Library
     const rename_dll_step = CreateClapPluginStep.create(b, lib);
     rename_dll_step.step.dependOn(&b.addInstallArtifact(lib, .{}).step);
     b.getInstallStep().dependOn(&rename_dll_step.step);
 
     // Also create executable for testing
     if (optimize == .Debug) {
-        const exe = b.addExecutable(
-            .{
-                .name = "zsynth",
-                .target = target,
-                .optimize = optimize,
-                .root_source_file = .{ .cwd_relative = "src/diag.zig" },
-            },
-        );
-
-        exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
-        exe.root_module.addImport("zgui", zgui.module("root"));
-        exe.linkLibrary(zgui.artifact("imgui"));
-
         b.installArtifact(exe);
         const run_exe = b.addRunArtifact(exe);
 

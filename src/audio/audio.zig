@@ -47,9 +47,9 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
                     // We can cast the pointer as we now know that is the parent type
                     const note_event: *const clap.events.Note = @ptrCast(@alignCast(event));
                     var voice = &plugin.voices.voices.items[i];
-                    if ((voice.channel == note_event.channel or note_event.channel == -1) and
-                        (voice.key == note_event.key or note_event.key == -1) and
-                        (voice.noteId == note_event.note_id or note_event.note_id == -1))
+                    if ((voice.channel == note_event.channel or note_event.channel == .unspecified) and
+                        (voice.key == note_event.key or note_event.key == .unspecified) and
+                        (voice.noteId == note_event.note_id or note_event.note_id == .unspecified))
                     {
 
                         // Note choke would have the note be immediately removed

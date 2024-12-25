@@ -13,7 +13,12 @@ var gpa: std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }) = undefined;
 // Within the factory
 const ClapEntry = struct {
     fn createEntry() clap.Entry {
-        return clap.Entry{ .version = clap.clap_version, .init = _init, .deinit = _deinit, .getFactory = _getFactory };
+        return clap.Entry{
+            .version = clap.version,
+            .init = _init,
+            .deinit = _deinit,
+            .getFactory = _getFactory,
+        };
     }
 
     fn _init(plugin_path: [*:0]const u8) callconv(.c) bool {

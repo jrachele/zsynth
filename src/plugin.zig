@@ -21,18 +21,19 @@ plugin: clap.Plugin,
 host: *const clap.Host,
 voices: Voices,
 params: Params,
-gui: GUI,
+gui: ?*GUI,
 wave_table: WaveTable,
-jobs: MainThreadJobs = .{},
 
-const MainThreadJobs = packed struct(u32) {
+jobs: Jobs = .{},
+
+const Jobs = packed struct(u32) {
     should_rescan_params: bool = false,
     sync_params_to_host: bool = false,
     _: u30 = 0,
 };
 
 pub const desc = clap.Plugin.Descriptor{
-    .clap_version = clap.clap_version,
+    .clap_version = clap.version,
     .id = "com.juge.zsynth",
     .name = "ZSynth",
     .vendor = "juge",
@@ -48,12 +49,12 @@ pub fn fromClapPlugin(plugin: *const clap.Plugin) *@This() {
     return @ptrCast(@alignCast(plugin.plugin_data));
 }
 
-pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
+const Plugin = @This();
+
+pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
     // Heap objects
-    const plugin = try allocator.create(@This());
+    const plugin = try allocator.create(Plugin);
     const voices = Voices.init(allocator);
-    errdefer voices.deinit();
-    errdefer allocator.destroy(plugin);
 
     // Stack objects
     const wave_table = if (options.generate_wavetables_comptime)
@@ -81,12 +82,20 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         .voices = voices,
         .params = .{},
         .wave_table = wave_table,
-        .gui = .{
-            // // The window will be set by the CLAP host
-            // .window = null,
-        },
+        .gui = null,
     };
 
+    return plugin;
+}
+
+pub fn deinit(self: *Plugin) void {
+    self.voices.deinit();
+    self.allocator.destroy(self);
+}
+
+pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
+    const plugin = try Plugin.init(allocator, host);
+    // This looks dangerous, but the object has the pointer so it's chill
     return &plugin.plugin;
 }
 
@@ -99,8 +108,7 @@ fn _init(_: *const clap.Plugin) callconv(.C) bool {
 fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Plugin destroyed!", .{});
     const plugin = fromClapPlugin(clap_plugin);
-    plugin.voices.deinit();
-    plugin.allocator.destroy(plugin);
+    plugin.deinit();
 }
 
 fn _activate(
@@ -202,7 +210,7 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
                 .key = voice.key,
                 .note_id = voice.noteId,
                 .channel = voice.channel,
-                .port_index = 0,
+                .port_index = .unspecified,
                 .velocity = 1,
             };
             if (!clap_process.out_events.tryPush(clap_process.out_events, &note.header)) {
@@ -227,19 +235,19 @@ const ext_gui = extensions.GUI.create();
 
 fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const anyopaque {
     std.log.debug("Get extension called {s}!", .{id});
-    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.audio_ports.id)) {
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.audio_ports.id)) {
         return &ext_audio_ports;
     }
-    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.note_ports.id)) {
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.note_ports.id)) {
         return &ext_note_ports;
     }
-    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.parameters.id)) {
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.params.id)) {
         return &ext_params;
     }
-    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.state.id)) {
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.state.id)) {
         return &ext_state;
     }
-    if (std.mem.eql(u8, std.mem.span(id), clap.extensions.gui.id)) {
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.gui.id)) {
         return &ext_gui;
     }
 
@@ -252,11 +260,11 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     if (plugin.jobs.should_rescan_params) {
         // Tell the host to rescan the parameters
         std.log.debug("Rescanning parameters...", .{});
-        const params_host = plugin.host.getExtension(plugin.host, clap.extensions.parameters.id);
+        const params_host = plugin.host.getExtension(plugin.host, clap.ext.params.id);
         if (params_host == null) {
             std.log.debug("Could not get params host!", .{});
         } else {
-            const p: *const clap.extensions.parameters.Host = @ptrCast(@alignCast(params_host.?));
+            const p: *const clap.ext.params.Host = @ptrCast(@alignCast(params_host.?));
             std.log.debug("Clearing and rescanning all", .{});
             var i: usize = 0;
             while (i < Params.param_count) : (i += 1) {

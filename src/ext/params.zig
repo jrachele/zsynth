@@ -6,7 +6,7 @@ const Plugin = @import("../plugin.zig");
 
 const Wave = @import("../audio/waves.zig").Wave;
 
-const Info = clap.extensions.parameters.Info;
+const Info = clap.ext.params.Info;
 
 pub const Parameter = enum {
     Attack,
@@ -37,7 +37,17 @@ pub const param_count = std.meta.fields(Parameter).len;
 
 param_values: ParamValues = ParamValues.init(param_defaults),
 
-pub inline fn create() clap.extensions.parameters.Plugin {
+const Params = @This();
+
+pub fn get(self: *const Params, param: Parameter) f64 {
+    return self.param_values.get(param);
+}
+
+pub fn set(self: *Params, param: Parameter, val: f64) void {
+    self.param_values.set(param, val);
+}
+
+pub inline fn create() clap.ext.params.Plugin {
     return .{
         .count = _count,
         .getInfo = _getInfo,
@@ -52,7 +62,7 @@ fn _count(_: *const clap.Plugin) callconv(.C) u32 {
     return @intCast(param_count);
 }
 
-fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) bool {
+pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) bool {
     if (index > _count(clap_plugin)) {
         return false;
     }
@@ -194,11 +204,11 @@ fn _getValue(clap_plugin: *const clap.Plugin, id: clap.Id, out_value: *f64) call
         return false;
     }
 
-    out_value.* = plugin.params.param_values.get(@enumFromInt(index));
+    out_value.* = plugin.params.get(@enumFromInt(index));
     return true;
 }
 
-fn _valueToText(
+pub fn _valueToText(
     _: *const clap.Plugin,
     id: clap.Id,
     value: f64,
@@ -209,26 +219,31 @@ fn _valueToText(
 
     const index: usize = @intFromEnum(id);
     const param_type: Parameter = @enumFromInt(index);
+    var bufSlice: []u8 = undefined;
     switch (param_type) {
         Parameter.Attack, Parameter.Decay, Parameter.Release => {
             if (value >= 1000) {
-                _ = std.fmt.bufPrint(out_buf, "{d:.3} s", .{value / 1000}) catch return false;
+                bufSlice = std.fmt.bufPrint(out_buf, "{d:.3} s", .{value / 1000}) catch return false;
             } else {
-                _ = std.fmt.bufPrint(out_buf, "{d:.0} ms", .{value}) catch return false;
+                bufSlice = std.fmt.bufPrint(out_buf, "{d:.0} ms", .{value}) catch return false;
             }
         },
         Parameter.Sustain => {
-            _ = std.fmt.bufPrint(out_buf, "{d:.2}%", .{value * 100}) catch return false;
+            bufSlice = std.fmt.bufPrint(out_buf, "{d:.2}%", .{value * 100}) catch return false;
         },
         Parameter.WaveShape => {
             const intValue: u32 = @intFromFloat(value);
             const wave: Wave = @enumFromInt(intValue);
-            _ = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
+            bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
         Parameter.DebugBool1, Parameter.DebugBool2 => {
             const bool_value: bool = if (value != 0.0) true else false;
-            _ = std.fmt.bufPrint(out_buf, "{s}", .{if (bool_value) "true" else "false"}) catch return false;
+            bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{if (bool_value) "true" else "false"}) catch return false;
         },
+    }
+    // Null terminate the buffer
+    if (bufSlice.len < out_buffer_capacity) {
+        out_buf[bufSlice.len] = 0;
     }
     return true;
 }
@@ -328,12 +343,12 @@ fn _textToValue(
 // Handle parameter changes
 pub fn _flush(
     clap_plugin: *const clap.Plugin,
-    events: *const clap.events.InputEvents,
+    input_events: *const clap.events.InputEvents,
     _: *const clap.events.OutputEvents,
 ) callconv(.C) void {
     const plugin = Plugin.fromClapPlugin(clap_plugin);
-    for (0..events.size(events)) |i| {
-        const event = events.get(events, @intCast(i));
+    for (0..input_events.size(input_events)) |i| {
+        const event = input_events.get(input_events, @intCast(i));
         if (event.space_id != clap.events.core_space_id) {
             continue;
         }

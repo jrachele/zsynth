@@ -1,7 +1,7 @@
 const clap = @import("clap-bindings");
 const std = @import("std");
 
-pub fn create() clap.extensions.note_ports.Plugin {
+pub fn create() clap.ext.note_ports.Plugin {
     return .{
         .count = count,
         .get = get,
@@ -13,7 +13,7 @@ fn count(_: *const clap.Plugin, is_input: bool) callconv(.C) u32 {
     return if (is_input) 1 else 0;
 }
 /// get info about a note port. returns true on success and stores the result into `info`.
-fn get(_: *const clap.Plugin, index: u32, is_input: bool, info: *clap.extensions.note_ports.Info) callconv(.C) bool {
+fn get(_: *const clap.Plugin, index: u32, is_input: bool, info: *clap.ext.note_ports.Info) callconv(.C) bool {
     if (!is_input or index != 0) {
         return false;
     }

@@ -4,7 +4,7 @@ const std = @import("std");
 const Params = @import("params.zig");
 const Plugin = @import("../plugin.zig");
 
-pub fn create() clap.extensions.state.Plugin {
+pub fn create() clap.ext.state.Plugin {
     return .{
         .save = _save,
         .load = _load,
@@ -19,10 +19,16 @@ fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(
     std.log.debug("Plugin data saved: {s}", .{str});
     defer plugin.allocator.free(str);
 
-    var total_bytes_written = stream.write(stream, str.ptr, str.len);
+    const res = stream.write(stream, str.ptr, str.len);
+    if (res == .write_error) {
+        std.log.err("Unable to write to plugin host output stream!", .{});
+        return false;
+    }
+    var total_bytes_written = @intFromEnum(res);
     while (total_bytes_written < str.len) {
         const bytes: usize = @intCast(total_bytes_written);
-        total_bytes_written += stream.write(stream, str.ptr + bytes, str.len - bytes);
+        // Not gonna bother checking the write error again lol
+        total_bytes_written += @intFromEnum(stream.write(stream, str.ptr + bytes, str.len - bytes));
     }
 
     return total_bytes_written == str.len;
@@ -37,12 +43,13 @@ fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(
 
     const MAX_BUF_SIZE = 1024; // this is entirely arbitrary.
     var buf: [MAX_BUF_SIZE]u8 = undefined;
-    var bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
-    if (bytes_read <= 0) {
+    const res = stream.read(stream, &buf, MAX_BUF_SIZE);
+    if (res == .read_error or res == .end_of_file) {
         std.log.err("Clap IStream Read Error or EOF on first read!", .{});
         return false;
     }
 
+    var bytes_read = @intFromEnum(res);
     while (bytes_read > 0) {
         // Append to the current working buffer
         const bytes: usize = @intCast(bytes_read);
@@ -52,7 +59,7 @@ fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(
         };
 
         // Read some more data in
-        bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
+        bytes_read = @intFromEnum(stream.read(stream, &buf, MAX_BUF_SIZE));
     }
 
     const params = createParamsFromBuffer(plugin.allocator, param_data_buf.items);
