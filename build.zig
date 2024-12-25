@@ -1,14 +1,7 @@
 const std = @import("std");
 const Step = std.Build.Step;
 
-const gui_supported = false;
-
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-    const clap_bindings = b.dependency("clap-bindings", .{});
-    const regex = b.dependency("regex", .{});
-
     const generate_wavetables_comptime = b.option(
         bool,
         "generate_wavetables_comptime",
@@ -20,6 +13,21 @@ pub fn build(b: *std.Build) void {
         "wait_for_debugger",
         "Stall when creating a plugin from the factory until a debugger mutates wait variable",
     ) orelse false;
+
+    const gui_supported = b.option(
+        bool,
+        "gui",
+        "Build ZSynth with a GUI for parameter management",
+    ) orelse false;
+
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const clap_bindings = b.dependency("clap-bindings", .{});
+    const regex = b.dependency("regex", .{});
+    const zgui = b.dependency("zgui", .{
+        .shared = false,
+        .with_implot = true,
+    });
 
     const lib = b.addSharedLibrary(
         .{
@@ -33,16 +41,15 @@ pub fn build(b: *std.Build) void {
     // Add CLAP headers
     lib.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
     lib.root_module.addImport("regex", regex.module("regex"));
+    lib.root_module.addImport("zgui", zgui.module("root"));
+    lib.linkLibrary(zgui.artifact("imgui"));
 
+    // Allow options to be passed in to source files
     var options = Step.Options.create(b);
     options.addOption(bool, "generate_wavetables_comptime", generate_wavetables_comptime);
     options.addOption(bool, "wait_for_debugger", wait_for_debugger);
+    options.addOption(bool, "gui_supported", gui_supported);
     lib.root_module.addOptions("options", options);
-
-    // if (gui_supported) {
-    //     const dvui = b.dependency("dvui", .{});
-    //     lib.root_module.addImport("dvui", dvui.module("dvui_sdl"));
-    // }
 
     const rename_dll_step = CreateClapPluginStep.create(b, lib);
     rename_dll_step.step.dependOn(&b.addInstallArtifact(lib, .{}).step);
@@ -60,12 +67,8 @@ pub fn build(b: *std.Build) void {
         );
 
         exe.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
-        const zigplotlib = b.dependency("zigplotlib", .{
-            .target = target,
-            .optimize = optimize,
-        });
-
-        exe.root_module.addImport("plotlib", zigplotlib.module("zigplotlib"));
+        exe.root_module.addImport("zgui", zgui.module("root"));
+        exe.linkLibrary(zgui.artifact("imgui"));
 
         b.installArtifact(exe);
         const run_exe = b.addRunArtifact(exe);

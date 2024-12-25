@@ -12,12 +12,12 @@ pub fn create() clap.extensions.state.Plugin {
 }
 
 // Frankly shocking how nice Zig makes this
-fn _save(plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
+fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
     std.log.debug("Saving plugin state...", .{});
-    const self = Plugin.fromPlugin(plugin);
-    const str = std.json.stringifyAlloc(self.allocator, self.params.values, .{}) catch return false;
+    const plugin = Plugin.fromClapPlugin(clap_plugin);
+    const str = std.json.stringifyAlloc(plugin.allocator, plugin.params.param_values.values, .{}) catch return false;
     std.log.debug("Plugin data saved: {s}", .{str});
-    defer self.allocator.free(str);
+    defer plugin.allocator.free(str);
 
     var total_bytes_written = stream.write(stream, str.ptr, str.len);
     while (total_bytes_written < str.len) {
@@ -28,11 +28,11 @@ fn _save(plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) b
     return total_bytes_written == str.len;
 }
 
-fn _load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
+fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
     std.log.debug("State._load called from plugin host", .{});
-    const self = Plugin.fromPlugin(plugin);
+    const plugin = Plugin.fromClapPlugin(clap_plugin);
 
-    var param_data_buf = std.ArrayList(u8).init(self.allocator);
+    var param_data_buf = std.ArrayList(u8).init(plugin.allocator);
     defer param_data_buf.deinit();
 
     const MAX_BUF_SIZE = 1024; // this is entirely arbitrary.
@@ -55,14 +55,14 @@ fn _load(plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) b
         bytes_read = stream.read(stream, &buf, MAX_BUF_SIZE);
     }
 
-    const params = createParamsFromBuffer(self.allocator, param_data_buf.items);
+    const params = createParamsFromBuffer(plugin.allocator, param_data_buf.items);
     if (params == null) {
         std.log.err("Unable to create params from the active state buffer! {s}", .{param_data_buf.items});
         return false;
     }
 
     // Mutate the overall plugin params now that they are properly loaded
-    self.params = params.?;
+    plugin.params.param_values = params.?;
     return true;
 }
 // Load the JSON state from a complete buffer.

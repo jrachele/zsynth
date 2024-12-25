@@ -1,3 +1,3 @@
-[submodule "zigplotlib"]
-	path = zigplotlib
-	url = https://github.com/jrachele/zigplotlib.git
+[submodule "zgui"]
+	path = zgui
+	url = git@github.com:jrachele/zgui.git

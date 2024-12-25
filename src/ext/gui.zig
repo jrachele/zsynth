@@ -1,5 +1,15 @@
 const std = @import("std");
 const clap = @import("clap-bindings");
+const options = @import("options");
+
+const Plugin = @import("../plugin.zig");
+
+const Self = @This();
+pub fn init() Self {
+    return .{};
+}
+
+pub fn deinit(_: *Self) void {}
 
 pub fn create() clap.extensions.gui.Plugin {
     return .{
@@ -24,7 +34,7 @@ pub fn create() clap.extensions.gui.Plugin {
 fn _isApiSupported(_: *const clap.Plugin, api: [*:0]const u8, is_floating: bool) callconv(.C) bool {
     _ = api;
     _ = is_floating;
-    return false;
+    return true;
 }
 /// returns true if the plugin has a preferred api. the host has no obligation to honor the plugin's preference,
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
@@ -32,7 +42,7 @@ fn _isApiSupported(_: *const clap.Plugin, api: [*:0]const u8, is_floating: bool)
 fn _getPreferredApi(_: *const clap.Plugin, api: *[*:0]const u8, is_floating: bool) callconv(.C) bool {
     _ = api;
     _ = is_floating;
-    return false;
+    return true;
 }
 /// create and allocate all resources needed for the gui.
 /// if `is_floating` is true then the window will not be managed by the host. the plugin can set its window
@@ -40,13 +50,22 @@ fn _getPreferredApi(_: *const clap.Plugin, api: *[*:0]const u8, is_floating: boo
 /// if `is_floating` is false then the plugin has to embed its window into the parent window (see `setParent`).
 /// after this call the gui may not be visible yet, don't forget to call `show`.
 /// returns true if the gui is successfully created.
-fn _create(_: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bool) callconv(.C) bool {
+fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bool) callconv(.C) bool {
     _ = api;
     _ = is_floating;
-    return false;
+
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+
+    plugin.gui = init();
+
+    return true;
 }
 /// free all resources associated with the gui
-fn _destroy(_: *const clap.Plugin) callconv(.C) void {}
+fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+
+    plugin.gui.deinit();
+}
 /// set the absolute gui scaling factor, overriding any os info. should not be
 /// used if the windowing api relies upon logical pixels. if the plugin prefers
 /// to work out the saling factor itself by quering the os directly, then ignore
@@ -79,29 +98,29 @@ fn _getResizeHints(_: *const clap.Plugin, hints: *clap.extensions.gui.ResizeHint
 fn _adjustSize(_: *const clap.Plugin, width: *u32, height: *u32) callconv(.C) bool {
     _ = width;
     _ = height;
-    return false;
+    return true;
 }
 /// sets the plugin's window size. returns true if the
 /// plugin successfully resized its window to the given size.
 fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
     _ = width;
     _ = height;
-    return false;
+    return true;
 }
 /// embeds the plugin window into the given window. returns true on success.
 fn _setParent(_: *const clap.Plugin, window: *const clap.extensions.gui.Window) callconv(.C) bool {
     _ = window;
-    return false;
+    return true;
 }
 /// sets the plugin window to stay above the given window. returns true on success.
 fn _setTransient(_: *const clap.Plugin, window: *const clap.extensions.gui.Window) callconv(.C) bool {
     _ = window;
-    return false;
+    return true;
 }
 /// suggests a window title. only for floating windows.
 fn _suggestTitle(_: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {
     _ = title;
-    return false;
+    return true;
 }
 /// show the plugin window. returns true on success.
 fn _show(_: *const clap.Plugin) callconv(.C) bool {

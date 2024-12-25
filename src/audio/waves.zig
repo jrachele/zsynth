@@ -1,8 +1,4 @@
-const builtin = @import("builtin");
 const std = @import("std");
-
-const audio = @import("audio.zig");
-const Voice = audio.Voice;
 
 // TODO: Eventually implement wave tables for each sample
 const SampleRate = i32;

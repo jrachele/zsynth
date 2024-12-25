@@ -5,21 +5,24 @@ const options = @import("options");
 const extensions = @import("extensions.zig");
 
 const Params = @import("ext/params.zig");
+const GUI = @import("ext/gui.zig");
+const Voices = @import("audio/voices.zig");
 
 const audio = @import("audio/audio.zig");
 const waves = @import("audio/waves.zig");
 
 const Parameter = Params.Parameter;
-const Voice = audio.Voice;
+const Voice = Voices.Voice;
+const WaveTable = waves.WaveTable;
 
 sample_rate: ?f64 = null,
 allocator: std.mem.Allocator,
 plugin: clap.Plugin,
 host: *const clap.Host,
-voices: std.ArrayList(Voice),
-params: Params.ParamValues,
-wave_table: waves.WaveTable,
-
+voices: Voices,
+params: Params,
+gui: GUI,
+wave_table: WaveTable,
 jobs: MainThreadJobs = .{},
 
 const MainThreadJobs = packed struct(u32) {
@@ -41,19 +44,18 @@ pub const desc = clap.Plugin.Descriptor{
     .features = &.{ clap.Plugin.features.stereo, clap.Plugin.features.synthesizer, clap.Plugin.features.instrument },
 };
 
-pub fn fromPlugin(plugin: *const clap.Plugin) *@This() {
+pub fn fromClapPlugin(plugin: *const clap.Plugin) *@This() {
     return @ptrCast(@alignCast(plugin.plugin_data));
 }
 
 pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap.Plugin {
     // Heap objects
     const plugin = try allocator.create(@This());
-    var voices = std.ArrayList(Voice).init(allocator);
+    const voices = Voices.init(allocator);
     errdefer voices.deinit();
     errdefer allocator.destroy(plugin);
 
     // Stack objects
-    const param_values = Params.ParamValues.init(Params.param_defaults);
     const wave_table = if (options.generate_wavetables_comptime)
         comptime waves.generate_wave_table()
     else
@@ -77,8 +79,12 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
         },
         .host = host,
         .voices = voices,
-        .params = param_values,
+        .params = .{},
         .wave_table = wave_table,
+        .gui = .{
+            // // The window will be set by the CLAP host
+            // .window = null,
+        },
     };
 
     return &plugin.plugin;
@@ -90,21 +96,21 @@ fn _init(_: *const clap.Plugin) callconv(.C) bool {
     return true;
 }
 
-fn _destroy(plugin: *const clap.Plugin) callconv(.C) void {
+fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Plugin destroyed!", .{});
-    var self = fromPlugin(plugin);
-    self.voices.deinit();
-    self.allocator.destroy(self);
+    const plugin = fromClapPlugin(clap_plugin);
+    plugin.voices.deinit();
+    plugin.allocator.destroy(plugin);
 }
 
 fn _activate(
-    plugin: *const clap.Plugin,
+    clap_plugin: *const clap.Plugin,
     sample_rate: f64,
     _: u32,
     _: u32,
 ) callconv(.C) bool {
-    var self = fromPlugin(plugin);
-    self.sample_rate = sample_rate;
+    const plugin = fromClapPlugin(clap_plugin);
+    plugin.sample_rate = sample_rate;
 
     return true;
 }
@@ -122,18 +128,18 @@ fn _stopProcessing(_: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Stop processing", .{});
 }
 
-fn _reset(plugin: *const clap.Plugin) callconv(.C) void {
+fn _reset(clap_plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Reset", .{});
 
     // Tell the host to rescan the parameters
-    var self = fromPlugin(plugin);
-    self.jobs.should_rescan_params = true;
-    self.host.requestCallback(self.host);
+    const plugin = fromClapPlugin(clap_plugin);
+    plugin.jobs.should_rescan_params = true;
+    plugin.host.requestCallback(plugin.host);
 }
 
 // This occurs on the audio thread
-fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callconv(.C) clap.Process.Status {
-    const self = fromPlugin(plugin);
+fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) callconv(.C) clap.Process.Status {
+    const plugin = fromClapPlugin(clap_plugin);
     std.debug.assert(clap_process.audio_inputs_count == 0);
     std.debug.assert(clap_process.audio_outputs_count == 1);
 
@@ -144,23 +150,13 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     const event_count = clap_process.in_events.size(clap_process.in_events);
 
     // Process parameter event changes
-    extensions.ext_params.flush(plugin, clap_process.in_events, clap_process.out_events);
-
-    var event_index: u32 = 0;
-    var current_frame: u32 = 0;
+    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
 
     const output_buffer_left = clap_process.audio_outputs[0].data32.?[0];
     const output_buffer_right = clap_process.audio_outputs[0].data32.?[1];
 
-    const output_left = output_buffer_left[0..frame_count];
-    const output_right = output_buffer_right[0..frame_count];
-
-    // Set the initial signal to the impulse
-    @memset(output_left, 0);
-    @memset(output_right, 0);
-    output_left[0] = 1;
-    output_right[0] = 1;
-
+    var event_index: u32 = 0;
+    var current_frame: u32 = 0;
     while (current_frame < frame_count) {
         // Process all events scheduled for the current frame
         while (event_index < event_count) {
@@ -172,7 +168,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
 
             // Append the event if it matches the current frame
             if (event.sample_offset == current_frame) {
-                audio.processNoteChanges(self, event);
+                audio.processNoteChanges(plugin, event);
                 event_index += 1;
             }
         }
@@ -187,13 +183,13 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
         }
 
         // Render audio from the current frame to the next frame (or the end of the buffer)
-        audio.renderAudio(self, current_frame, next_frame, output_buffer_left, output_buffer_right);
+        audio.renderAudio(plugin, current_frame, next_frame, output_buffer_left, output_buffer_right);
         current_frame = next_frame;
     }
 
     var i: u32 = 0;
-    while (i < self.voices.items.len) : (i += 1) {
-        const voice = &self.voices.items[i];
+    while (i < plugin.voices.voices.items.len) : (i += 1) {
+        const voice = &plugin.voices.voices.items[i];
         if (voice.adsr.isEnded()) {
             const note = clap.events.Note{
                 .header = .{
@@ -214,7 +210,7 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
                 return clap.Process.Status.@"error";
             }
 
-            _ = self.voices.orderedRemove(i);
+            _ = plugin.voices.voices.orderedRemove(i);
             if (i > 0) {
                 i -= 1;
             }
@@ -223,34 +219,40 @@ fn _process(plugin: *const clap.Plugin, clap_process: *const clap.Process) callc
     return clap.Process.Status.@"continue";
 }
 
+const ext_audio_ports = extensions.AudioPorts.create();
+const ext_note_ports = extensions.NotePorts.create();
+const ext_params = extensions.Params.create();
+const ext_state = extensions.State.create();
+const ext_gui = extensions.GUI.create();
+
 fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const anyopaque {
     std.log.debug("Get extension called {s}!", .{id});
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.audio_ports.id)) {
-        return &extensions.ext_audio_ports;
+        return &ext_audio_ports;
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.note_ports.id)) {
-        return &extensions.ext_note_ports;
+        return &ext_note_ports;
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.parameters.id)) {
-        return &extensions.ext_params;
+        return &ext_params;
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.state.id)) {
-        return &extensions.ext_state;
+        return &ext_state;
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.extensions.gui.id)) {
-        return &extensions.ext_gui;
+        return &ext_gui;
     }
 
     return null;
 }
 
-fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
+fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("onMainThread invoked...", .{});
-    const self = fromPlugin(plugin);
-    if (self.jobs.should_rescan_params) {
+    const plugin = fromClapPlugin(clap_plugin);
+    if (plugin.jobs.should_rescan_params) {
         // Tell the host to rescan the parameters
         std.log.debug("Rescanning parameters...", .{});
-        const params_host = self.host.getExtension(self.host, clap.extensions.parameters.id);
+        const params_host = plugin.host.getExtension(plugin.host, clap.extensions.parameters.id);
         if (params_host == null) {
             std.log.debug("Could not get params host!", .{});
         } else {
@@ -258,12 +260,12 @@ fn _onMainThread(plugin: *const clap.Plugin) callconv(.C) void {
             std.log.debug("Clearing and rescanning all", .{});
             var i: usize = 0;
             while (i < Params.param_count) : (i += 1) {
-                p.clear(self.host, @enumFromInt(i), .{ .all = true });
+                p.clear(plugin.host, @enumFromInt(i), .{ .all = true });
             }
-            p.rescan(self.host, .{
+            p.rescan(plugin.host, .{
                 .all = true,
             });
         }
-        self.jobs.should_rescan_params = false;
+        plugin.jobs.should_rescan_params = false;
     }
 }

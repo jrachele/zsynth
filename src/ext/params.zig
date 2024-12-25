@@ -35,23 +35,25 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
 
 pub const param_count = std.meta.fields(Parameter).len;
 
-pub fn create() clap.extensions.parameters.Plugin {
+param_values: ParamValues = ParamValues.init(param_defaults),
+
+pub inline fn create() clap.extensions.parameters.Plugin {
     return .{
-        .count = count,
-        .getInfo = getInfo,
-        .getValue = getValue,
-        .valueToText = valueToText,
-        .textToValue = textToValue,
-        .flush = flush,
+        .count = _count,
+        .getInfo = _getInfo,
+        .getValue = _getValue,
+        .valueToText = _valueToText,
+        .textToValue = _textToValue,
+        .flush = _flush,
     };
 }
 
-fn count(_: *const clap.Plugin) callconv(.C) u32 {
+fn _count(_: *const clap.Plugin) callconv(.C) u32 {
     return @intCast(param_count);
 }
 
-fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) bool {
-    if (index > count(plugin)) {
+fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) bool {
+    if (index > _count(clap_plugin)) {
         return false;
     }
 
@@ -185,18 +187,18 @@ fn getInfo(plugin: *const clap.Plugin, index: u32, info: *Info) callconv(.C) boo
     return true;
 }
 
-fn getValue(plugin: *const clap.Plugin, id: clap.Id, out_value: *f64) callconv(.C) bool {
-    const obj = Plugin.fromPlugin(plugin);
+fn _getValue(clap_plugin: *const clap.Plugin, id: clap.Id, out_value: *f64) callconv(.C) bool {
+    const plugin = Plugin.fromClapPlugin(clap_plugin);
     const index: usize = @intFromEnum(id);
-    if (index > count(plugin)) {
+    if (index > _count(clap_plugin)) {
         return false;
     }
 
-    out_value.* = obj.params.get(@enumFromInt(index));
+    out_value.* = plugin.params.param_values.get(@enumFromInt(index));
     return true;
 }
 
-fn valueToText(
+fn _valueToText(
     _: *const clap.Plugin,
     id: clap.Id,
     value: f64,
@@ -240,13 +242,13 @@ fn anyUnitEql(unit: []const u8, cmps: []const []const u8) bool {
     return false;
 }
 
-fn textToValue(
-    plugin: *const clap.Plugin,
+fn _textToValue(
+    clap_plugin: *const clap.Plugin,
     id: clap.Id,
     value_text: [*:0]const u8,
     out_value: *f64,
 ) callconv(.C) bool {
-    const self = Plugin.fromPlugin(plugin);
+    const plugin = Plugin.fromClapPlugin(clap_plugin);
     const index: usize = @intFromEnum(id);
     const param_type: Parameter = @enumFromInt(index);
     const value = std.mem.span(value_text);
@@ -279,7 +281,7 @@ fn textToValue(
     var unit_string: [64]u8 = undefined;
     var val_float: f64 = 0;
     const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%)?\\s*";
-    var re = regex.Regex.compile(self.allocator, pattern) catch return false;
+    var re = regex.Regex.compile(plugin.allocator, pattern) catch return false;
     defer re.deinit();
 
     // If we had no matches, the input is invalid
@@ -324,12 +326,12 @@ fn textToValue(
 }
 
 // Handle parameter changes
-fn flush(
-    plugin: *const clap.Plugin,
+pub fn _flush(
+    clap_plugin: *const clap.Plugin,
     events: *const clap.events.InputEvents,
     _: *const clap.events.OutputEvents,
 ) callconv(.C) void {
-    const self = Plugin.fromPlugin(plugin);
+    const plugin = Plugin.fromClapPlugin(clap_plugin);
     for (0..events.size(events)) |i| {
         const event = events.get(events, @intCast(i));
         if (event.space_id != clap.events.core_space_id) {
@@ -342,13 +344,13 @@ fn flush(
                 return;
             }
 
-            self.params.set(@enumFromInt(index), param_event.value);
+            plugin.params.param_values.set(@enumFromInt(index), param_event.value);
         }
     }
-    for (self.voices.items) |*voice| {
-        voice.adsr.attack_time = self.params.get(Parameter.Attack);
-        voice.adsr.decay_time = self.params.get(Parameter.Decay);
-        voice.adsr.release_time = self.params.get(Parameter.Release);
-        voice.adsr.sustain_value = self.params.get(Parameter.Sustain);
+    for (plugin.voices.voices.items) |*voice| {
+        voice.adsr.attack_time = plugin.params.param_values.get(Parameter.Attack);
+        voice.adsr.decay_time = plugin.params.param_values.get(Parameter.Decay);
+        voice.adsr.release_time = plugin.params.param_values.get(Parameter.Release);
+        voice.adsr.sustain_value = plugin.params.param_values.get(Parameter.Sustain);
     }
 }
