@@ -15,7 +15,15 @@ pub fn create() clap.ext.state.Plugin {
 fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
     std.log.debug("Saving plugin state...", .{});
     const plugin = Plugin.fromClapPlugin(clap_plugin);
-    const str = std.json.stringifyAlloc(plugin.allocator, plugin.params.param_values.values, .{}) catch return false;
+
+    // Ensure thread safety by locking the params first before reading them
+    const locked = plugin.params.mutex.tryLock();
+    if (!locked) {
+        return false;
+    }
+
+    defer plugin.params.mutex.unlock();
+    const str = std.json.stringifyAlloc(plugin.allocator, plugin.params.values.values, .{}) catch return false;
     std.log.debug("Plugin data saved: {s}", .{str});
     defer plugin.allocator.free(str);
 
@@ -69,8 +77,14 @@ fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(
     }
 
     // Mutate the overall plugin params now that they are properly loaded
-    plugin.params.param_values = params.?;
-    return true;
+    if (plugin.params.mutex.tryLock()) {
+        defer plugin.params.mutex.unlock();
+
+        plugin.params.values = params.?;
+        return true;
+    }
+
+    return false;
 }
 // Load the JSON state from a complete buffer.
 fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.ParamValues {

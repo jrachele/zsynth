@@ -55,6 +55,7 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
     // Heap objects
     const plugin = try allocator.create(Plugin);
     const voices = Voices.init(allocator);
+    const params = Params.init(allocator);
 
     // Stack objects
     const wave_table = if (options.generate_wavetables_comptime)
@@ -80,7 +81,7 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
         },
         .host = host,
         .voices = voices,
-        .params = .{},
+        .params = params,
         .wave_table = wave_table,
         .gui = null,
     };
@@ -90,6 +91,7 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
 
 pub fn deinit(self: *Plugin) void {
     self.voices.deinit();
+    self.params.deinit();
     self.allocator.destroy(self);
 }
 
@@ -178,6 +180,20 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
             if (event.sample_offset == current_frame) {
                 audio.processNoteChanges(plugin, event);
                 event_index += 1;
+            }
+        }
+
+        // Process GUI parameter event changes
+        if (plugin.params.mutex.tryLock()) {
+            defer plugin.params.mutex.unlock();
+
+            while (plugin.params.events.popOrNull()) |event| {
+                const event_header: *clap.events.Header = @constCast(@alignCast(&event.header));
+                event_header.sample_offset = current_frame;
+                if (!clap_process.out_events.tryPush(clap_process.out_events, event_header)) {
+                    std.log.err("Unable to notify DAW of parameter event changes!", .{});
+                    return clap.Process.Status.@"error";
+                }
             }
         }
 
@@ -280,7 +296,6 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     // Update the GUI if exists
     if (plugin.gui != null) {
         while (plugin.gui.?.draw()) {}
-
         plugin.gui.?.deinit();
         plugin.gui = null;
         if (plugin.host.getExtension(plugin.host, clap.ext.gui.id)) |host_header| {

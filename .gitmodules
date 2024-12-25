@@ -7,3 +7,6 @@
 [submodule "zopengl"]
 	path = zopengl
 	url = git@github.com:jrachele/zopengl.git
+[submodule "clap-zig-bindings"]
+	path = clap-zig-bindings
+	url = git@git.sr.ht:~juge/clap-zig-bindings

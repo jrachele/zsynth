@@ -133,9 +133,9 @@ pub fn draw(self: *GUI) bool {
                                 .max = @floatCast(info.max_value),
                             },
                         )) {
-                            self.plugin.params.set(param_type, @as(f64, @floatCast(val)));
-                            std.log.debug("Changed param value of {} to {d}", .{ param_type, val });
-                            // TODO: Lock an event queue on Plugin, and in Plugin.process() process a param value changed event
+                            self.plugin.params.set(param_type, @as(f64, @floatCast(val)), .{
+                                .should_notify_host = true,
+                            }) catch return false;
                         }
                     },
                     .DebugBool1, .DebugBool2 => {
@@ -145,7 +145,9 @@ pub fn draw(self: *GUI) bool {
                                 .v = &val,
                             })) {
                                 const f: f64 = if (val) 1.0 else 0.0;
-                                self.plugin.params.set(param_type, f);
+                                self.plugin.params.set(param_type, f, .{
+                                    .should_notify_host = true,
+                                }) catch return false;
                             }
                         }
                     },
@@ -155,7 +157,9 @@ pub fn draw(self: *GUI) bool {
                             if (zgui.radioButton(field.name, .{
                                 .active = self.plugin.params.get(.WaveShape) == field.value,
                             })) {
-                                self.plugin.params.set(.WaveShape, field.value);
+                                self.plugin.params.set(.WaveShape, field.value, .{
+                                    .should_notify_host = true,
+                                }) catch return false;
                             }
                         }
                     },

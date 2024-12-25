@@ -26,10 +26,10 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
                 const note_event: *const clap.events.Note = @ptrCast(@alignCast(event));
 
                 const adsr = ADSR.init(
-                    plugin.params.param_values.get(Parameter.Attack),
-                    plugin.params.param_values.get(Parameter.Decay),
-                    plugin.params.param_values.get(Parameter.Sustain),
-                    plugin.params.param_values.get(Parameter.Release),
+                    plugin.params.get(Parameter.Attack),
+                    plugin.params.get(Parameter.Decay),
+                    plugin.params.get(Parameter.Sustain),
+                    plugin.params.get(Parameter.Release),
                 );
 
                 var new_voice = Voice{};
@@ -89,7 +89,7 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
 }
 
 pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
-    const wave_value: u32 = @intFromFloat(plugin.params.param_values.get(Parameter.WaveShape));
+    const wave_value: u32 = @intFromFloat(plugin.params.values.get(Parameter.WaveShape));
     const wave_type: Wave = std.meta.intToEnum(Wave, wave_value) catch Wave.Sine;
 
     var index = start;

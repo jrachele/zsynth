@@ -35,16 +35,65 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
 
 pub const param_count = std.meta.fields(Parameter).len;
 
-param_values: ParamValues = ParamValues.init(param_defaults),
-
 const Params = @This();
 
-pub fn get(self: *const Params, param: Parameter) f64 {
-    return self.param_values.get(param);
+values: ParamValues = ParamValues.init(param_defaults),
+mutex: std.Thread.Mutex,
+events: std.ArrayList(clap.events.ParamValue),
+
+pub fn init(allocator: std.mem.Allocator) Params {
+    const events = std.ArrayList(clap.events.ParamValue).init(allocator);
+    return .{
+        .events = events,
+        .mutex = .{},
+    };
 }
 
-pub fn set(self: *Params, param: Parameter, val: f64) void {
-    self.param_values.set(param, val);
+pub fn deinit(self: *Params) void {
+    self.events.deinit();
+}
+
+/// Thread-safe getter for parameter values
+pub fn get(self: *Params, param: Parameter) f64 {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    return self.values.get(param);
+}
+
+/// Thread-safe setter for params that also optionally notifies the host
+const ParamSetFlags = struct {
+    should_notify_host: bool = false,
+};
+
+pub fn set(self: *Params, param: Parameter, val: f64, flags: ParamSetFlags) !void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    self.values.set(param, val);
+
+    if (flags.should_notify_host) {
+        // Add to the event queue to notify the DAW on the audio thread
+        const param_index: usize = @intFromEnum(param);
+        const event = clap.events.ParamValue{
+            .header = .{
+                .type = .param_value,
+                .size = @sizeOf(clap.events.ParamValue),
+                .space_id = clap.events.core_space_id,
+                .sample_offset = 0, // This will be set by the _process function when telling the DAW
+                .flags = .{},
+            },
+            .note_id = .unspecified,
+            .channel = .unspecified,
+            .key = .unspecified,
+            .port_index = .unspecified,
+            .param_id = @enumFromInt(param_index),
+            .value = val,
+            .cookie = null,
+        };
+
+        try self.events.append(event);
+    }
+
+    std.log.debug("Changed param value of {} to {d}", .{ param, val });
 }
 
 pub inline fn create() clap.ext.params.Plugin {
@@ -359,13 +408,13 @@ pub fn _flush(
                 return;
             }
 
-            plugin.params.param_values.set(@enumFromInt(index), param_event.value);
+            plugin.params.set(@enumFromInt(index), param_event.value, .{}) catch unreachable;
         }
     }
     for (plugin.voices.voices.items) |*voice| {
-        voice.adsr.attack_time = plugin.params.param_values.get(Parameter.Attack);
-        voice.adsr.decay_time = plugin.params.param_values.get(Parameter.Decay);
-        voice.adsr.release_time = plugin.params.param_values.get(Parameter.Release);
-        voice.adsr.sustain_value = plugin.params.param_values.get(Parameter.Sustain);
+        voice.adsr.attack_time = plugin.params.get(Parameter.Attack);
+        voice.adsr.decay_time = plugin.params.get(Parameter.Decay);
+        voice.adsr.release_time = plugin.params.get(Parameter.Release);
+        voice.adsr.sustain_value = plugin.params.get(Parameter.Sustain);
     }
 }
