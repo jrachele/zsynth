@@ -38,7 +38,7 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
     const window = try glfw.Window.create(800, 500, window_title, null);
     errdefer window.destroy();
 
-    window.setSizeLimits(400, 400, -1, -1);
+    window.setSizeLimits(100, 100, -1, -1);
 
     glfw.makeContextCurrent(window);
     glfw.swapInterval(1);
@@ -51,7 +51,6 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
         const scale = window.getContentScale();
         break :scale_factor @max(scale[0], scale[1]);
     };
-
     _ = zgui.io.addFontFromMemory(static_data.font, std.math.floor(16.0 * scale_factor));
 
     zgui.io.setIniFilename(null);
@@ -93,9 +92,9 @@ pub fn draw(self: *GUI) bool {
 
     zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
 
-    zgui.setNextWindowPos(.{ .x = 0, .y = 0, .cond = .first_use_ever });
+    zgui.setNextWindowPos(.{ .x = 0, .y = 0, .cond = .always });
     const display_size = zgui.io.getDisplaySize();
-    zgui.setNextWindowSize(.{ .w = display_size[0], .h = display_size[1], .cond = .first_use_ever });
+    zgui.setNextWindowSize(.{ .w = display_size[0], .h = display_size[1], .cond = .always });
 
     if (zgui.begin(
         "Tool window",
@@ -220,6 +219,11 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
     _ = is_floating;
 
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui != null) {
+        std.log.info("GUI has already been initialized, earlying out", .{});
+        return false;
+    }
+
     plugin.gui = GUI.init(plugin.allocator, plugin) catch null;
 
     if (plugin.gui != null) {

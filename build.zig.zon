@@ -24,7 +24,8 @@
     // internet connectivity.
     .dependencies = .{
         .@"clap-bindings" = .{
-            .path = "clap-zig-bindings",
+            .url = "git+https://git.sr.ht/~interpunct/clap-zig-bindings#c44befd669fec92cf640300376cdf0b8ec0b249c",
+            .hash = "1220df31755040be132596dcecdcb7381413a5382d09658496db0c1daaaa333d79f6",
         },
         .regex = .{
             .url = "https://github.com/tiehuis/zig-regex/archive/7bc0fd7.tar.gz",
