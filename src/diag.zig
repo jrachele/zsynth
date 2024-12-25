@@ -19,5 +19,5 @@ pub fn main() !void {
     var gui = try GUI.init(allocator, plugin);
     defer gui.deinit();
 
-    gui.uiLoop();
+    while (gui.draw()) {}
 }

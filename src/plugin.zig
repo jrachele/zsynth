@@ -276,4 +276,18 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
         }
         plugin.jobs.should_rescan_params = false;
     }
+
+    // Update the GUI if exists
+    if (plugin.gui != null) {
+        while (plugin.gui.?.draw()) {}
+
+        plugin.gui.?.deinit();
+        plugin.gui = null;
+        if (plugin.host.getExtension(plugin.host, clap.ext.gui.id)) |host_header| {
+            var gui_host: *clap.ext.gui.Host = @constCast(@ptrCast(@alignCast(host_header)));
+            std.log.debug("Got GUI host, sending closed event", .{});
+            // Is this a Bitwig bug or is this not being listened to properly?
+            gui_host.closed(plugin.host, true);
+        }
+    }
 }

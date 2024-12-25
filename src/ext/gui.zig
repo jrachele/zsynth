@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
 const options = @import("options");
@@ -9,6 +10,9 @@ const zopengl = @import("zopengl");
 
 const Plugin = @import("../plugin.zig");
 const Params = @import("params.zig");
+
+const waves = @import("../audio/waves.zig");
+const Wave = waves.Wave;
 
 window: *glfw.Window,
 plugin: *Plugin,
@@ -71,77 +75,102 @@ pub fn deinit(self: *GUI) void {
     self.allocator.destroy(self);
 }
 
-pub fn uiLoop(self: *GUI) void {
-    const window = self.window;
+pub fn draw(self: *GUI) bool {
+    var window = self.window;
+    if (window.shouldClose()) return false;
+    if (window.getKey(.escape) == .press) {
+        window.setShouldClose(true);
+        return false;
+    }
 
     const gl = zopengl.bindings;
 
-    while (!window.shouldClose() and window.getKey(.escape) != .press) {
-        glfw.pollEvents();
+    glfw.pollEvents();
 
-        gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
+    gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
 
-        const fb_size = window.getFramebufferSize();
+    const fb_size = window.getFramebufferSize();
 
-        zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+    zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
 
-        zgui.setNextWindowPos(.{ .x = 0, .y = 0, .cond = .first_use_ever });
-        const display_size = zgui.io.getDisplaySize();
-        zgui.setNextWindowSize(.{ .w = display_size[0], .h = display_size[1], .cond = .first_use_ever });
+    zgui.setNextWindowPos(.{ .x = 0, .y = 0, .cond = .first_use_ever });
+    const display_size = zgui.io.getDisplaySize();
+    zgui.setNextWindowSize(.{ .w = display_size[0], .h = display_size[1], .cond = .first_use_ever });
 
-        if (zgui.begin(
-            "Tool window",
-            .{
-                .flags = .{
-                    .no_collapse = true,
-                    .no_move = true,
-                    .no_resize = true,
-                    .no_title_bar = true,
-                },
+    if (zgui.begin(
+        "Tool window",
+        .{
+            .flags = .{
+                .no_collapse = true,
+                .no_move = true,
+                .no_resize = true,
+                .no_title_bar = true,
             },
-        )) {
-            // Populate the widgets based on the parameters
-            // Mimick what CLAP does
-            zgui.text("Parameters", .{});
+        },
+    )) {
+        // Populate the widgets based on the parameters
+        // Mimick what CLAP does
+        zgui.text("Parameters", .{});
 
-            for (0..Params.param_count) |i| {
-                const index: u32 = @intCast(i);
-                var info: clap.ext.params.Info = undefined;
-                if (Params._getInfo(&self.plugin.plugin, index, &info)) {
-                    const param_type = std.meta.intToEnum(Params.Parameter, index) catch {
-                        std.debug.panic("Unable to cast index to parameter enum! {d}", .{index});
-                    };
+        for (0..Params.param_count) |i| {
+            const index: u32 = @intCast(i);
+            var info: clap.ext.params.Info = undefined;
+            if (Params._getInfo(&self.plugin.plugin, index, &info)) {
+                const param_type = std.meta.intToEnum(Params.Parameter, index) catch {
+                    std.debug.panic("Unable to cast index to parameter enum! {d}", .{index});
+                };
 
-                    const name = std.mem.sliceTo(&info.name, 0);
-                    const value_text: [:0]u8 = info.name[0..name.len :0];
+                const name = std.mem.sliceTo(&info.name, 0);
+                const value_text: [:0]u8 = info.name[0..name.len :0];
 
-                    switch (param_type) {
-                        .Attack, .Release, .Decay => {
-                            var val: f32 = @floatCast(self.plugin.params.get(param_type));
-                            if (zgui.sliderFloat(
-                                value_text,
-                                .{
-                                    .v = &val,
-                                    .min = @floatCast(info.min_value),
-                                    .max = @floatCast(info.max_value),
-                                },
-                            )) {
-                                self.plugin.params.set(param_type, @as(f64, @floatCast(val)));
-                                std.log.debug("Changed param value of {} to {d}", .{ param_type, val });
-                                // TODO: Lock an event queue on Plugin, and in Plugin.process() process a param value changed event
+                switch (param_type) {
+                    .Attack, .Release, .Decay, .Sustain => {
+                        var val: f32 = @floatCast(self.plugin.params.get(param_type));
+                        if (zgui.sliderFloat(
+                            value_text,
+                            .{
+                                .v = &val,
+                                .min = @floatCast(info.min_value),
+                                .max = @floatCast(info.max_value),
+                            },
+                        )) {
+                            self.plugin.params.set(param_type, @as(f64, @floatCast(val)));
+                            std.log.debug("Changed param value of {} to {d}", .{ param_type, val });
+                            // TODO: Lock an event queue on Plugin, and in Plugin.process() process a param value changed event
+                        }
+                    },
+                    .DebugBool1, .DebugBool2 => {
+                        if (builtin.mode == .Debug) {
+                            var val: bool = self.plugin.params.get(param_type) == 1.0;
+                            if (zgui.checkbox(value_text, .{
+                                .v = &val,
+                            })) {
+                                const f: f64 = if (val) 1.0 else 0.0;
+                                self.plugin.params.set(param_type, f);
                             }
-                        },
-                        else => {},
-                    }
+                        }
+                    },
+                    .WaveShape => {
+                        // TODO replace these with iconic buttons
+                        inline for (std.meta.fields(Wave)) |field| {
+                            if (zgui.radioButton(field.name, .{
+                                .active = self.plugin.params.get(.WaveShape) == field.value,
+                            })) {
+                                self.plugin.params.set(.WaveShape, field.value);
+                            }
+                        }
+                    },
                 }
             }
         }
-        zgui.end();
-
-        zgui.backend.draw();
-
-        window.swapBuffers();
     }
+    zgui.end();
+
+    zgui.backend.draw();
+
+    window.swapBuffers();
+
+    return true;
 }
 
 fn getSize(self: *const GUI) [2]u32 {
@@ -193,6 +222,11 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     plugin.gui = GUI.init(plugin.allocator, plugin) catch null;
 
+    if (plugin.gui != null) {
+        // If we succeeded, let the plugin host know so we can kick off the draw loop on the main thread
+        plugin.host.requestCallback(plugin.host);
+    }
+
     return plugin.gui != null;
 }
 /// free all resources associated with the gui
@@ -201,6 +235,7 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     if (plugin.gui != null) {
         plugin.gui.?.deinit();
+        plugin.gui = null;
     }
 }
 /// set the absolute gui scaling factor, overriding any os info. should not be
@@ -216,17 +251,13 @@ fn _setScale(_: *const clap.Plugin, scale: f64) callconv(.C) bool {
 /// asking for the size. returns true and populates `width.*` and `height.*` if the plugin
 /// successfully got the size.
 fn _getSize(clap_plugin: *const clap.Plugin, width: *u32, height: *u32) callconv(.C) bool {
-    _ = clap_plugin;
-    _ = width;
-    _ = height;
-
-    // const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
-    // if (plugin.gui) |gui| {
-    //     const window_size = gui.getSize();
-    //     width.* = window_size[0];
-    //     height.* = window_size[1];
-    //     return true;
-    // }
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        const window_size = gui.getSize();
+        width.* = window_size[0];
+        height.* = window_size[1];
+        return true;
+    }
     return false;
 }
 /// returns true if the window is resizable (mouse drag)
@@ -251,12 +282,12 @@ fn _adjustSize(_: *const clap.Plugin, width: *u32, height: *u32) callconv(.C) bo
 fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
     _ = width;
     _ = height;
-    return true;
+    return false;
 }
 /// embeds the plugin window into the given window. returns true on success.
 fn _setParent(_: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
     _ = window;
-    return true;
+    return false;
 }
 /// sets the plugin window to stay above the given window. returns true on success.
 fn _setTransient(_: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
