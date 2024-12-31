@@ -1,3 +1,5 @@
+const GUI = @This();
+
 const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
@@ -17,11 +19,12 @@ const Wave = waves.Wave;
 window: *glfw.Window,
 plugin: *Plugin,
 allocator: std.mem.Allocator,
+is_visible: bool = false,
 
 const window_title = "ZSynth";
 
-const GUI = @This();
 pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
+    std.log.debug("GUI init() called", .{});
     const gui = try allocator.create(GUI);
 
     try glfw.init();
@@ -67,11 +70,21 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
 }
 
 pub fn deinit(self: *GUI) void {
+    std.log.debug("GUI deinit() called", .{});
     zgui.backend.deinit();
     zgui.deinit();
     self.window.destroy();
     glfw.terminate();
+    self.plugin.gui = null;
     self.allocator.destroy(self);
+}
+
+pub fn show(self: *GUI) void {
+    self.is_visible = true;
+}
+
+pub fn hide(self: *GUI) void {
+    self.is_visible = false;
 }
 
 pub fn draw(self: *GUI) bool {
@@ -138,7 +151,7 @@ pub fn draw(self: *GUI) bool {
                             }) catch return false;
                         }
                     },
-                    .DebugBool1, .DebugBool2 => {
+                    .ScaleVoices, .DebugBool1, .DebugBool2 => {
                         if (builtin.mode == .Debug) {
                             var val: bool = self.plugin.params.get(param_type) == 1.0;
                             if (zgui.checkbox(value_text, .{
@@ -230,11 +243,6 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
 
     plugin.gui = GUI.init(plugin.allocator, plugin) catch null;
 
-    if (plugin.gui != null) {
-        // If we succeeded, let the plugin host know so we can kick off the draw loop on the main thread
-        plugin.host.requestCallback(plugin.host);
-    }
-
     return plugin.gui != null;
 }
 /// free all resources associated with the gui
@@ -310,8 +318,8 @@ fn _suggestTitle(_: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool 
 /// show the plugin window. returns true on success.
 fn _show(clap_plugin: *const clap.Plugin) callconv(.C) bool {
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
-    if (plugin.gui != null) {
-        plugin.gui.?.window.show();
+    if (plugin.gui) |gui| {
+        gui.show();
         return true;
     }
 
@@ -320,6 +328,12 @@ fn _show(clap_plugin: *const clap.Plugin) callconv(.C) bool {
 /// hide the plugin window. this method does not free the
 /// resources, just hides the window content, yet it may be
 /// a good idea to stop painting timers. returns true on success.
-fn _hide(_: *const clap.Plugin) callconv(.C) bool {
+fn _hide(clap_plugin: *const clap.Plugin) callconv(.C) bool {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        gui.hide();
+        return true;
+    }
+
     return false;
 }

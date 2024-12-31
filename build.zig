@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Step = std.Build.Step;
 
@@ -119,9 +120,20 @@ pub const CreateClapPluginStep = struct {
         const self: *Self = @fieldParentPtr("step", step);
         if (self.build.build_root.path) |path| {
             var dir = try std.fs.openDirAbsolute(path, .{});
-            _ = try dir.updateFile("zig-out/lib/libzsynth.dylib", dir, "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth", .{});
-            _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/ZSynth.clap/Contents/info.plist", .{});
-            _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/ZSynth.clap/Contents/PkgInfo", .{});
+            switch (builtin.os.tag) {
+                .macos => {
+                    _ = try dir.updateFile("zig-out/lib/libzsynth.dylib", dir, "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth", .{});
+                    _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/ZSynth.clap/Contents/info.plist", .{});
+                    _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/ZSynth.clap/Contents/PkgInfo", .{});
+                },
+                .linux => {
+                    _ = try dir.updateFile("zig-out/lib/libzsynth.so", dir, "zig-out/lib/zsynth.clap", .{});
+                },
+                .windows => {
+                    _ = try dir.updateFile("zig-out\\lib\\libzsynth.dll", dir, "zig-out\\lib\\zsynth.clap", .{});
+                },
+                else => {},
+            }
         }
     }
 };

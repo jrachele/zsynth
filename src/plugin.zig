@@ -1,3 +1,5 @@
+const Plugin = @This();
+
 const std = @import("std");
 const clap = @import("clap-bindings");
 
@@ -28,8 +30,9 @@ jobs: Jobs = .{},
 
 const Jobs = packed struct(u32) {
     should_rescan_params: bool = false,
-    sync_params_to_host: bool = false,
-    _: u30 = 0,
+    notify_host_params_changed: bool = false,
+    notify_host_voices_changed: bool = false,
+    _: u29 = 0,
 };
 
 pub const desc = clap.Plugin.Descriptor{
@@ -45,16 +48,14 @@ pub const desc = clap.Plugin.Descriptor{
     .features = &.{ clap.Plugin.features.stereo, clap.Plugin.features.synthesizer, clap.Plugin.features.instrument },
 };
 
-pub fn fromClapPlugin(plugin: *const clap.Plugin) *@This() {
-    return @ptrCast(@alignCast(plugin.plugin_data));
+pub fn fromClapPlugin(clap_plugin: *const clap.Plugin) *Plugin {
+    return @ptrCast(@alignCast(clap_plugin.plugin_data));
 }
-
-const Plugin = @This();
 
 pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
     // Heap objects
     const plugin = try allocator.create(Plugin);
-    const voices = Voices.init(allocator);
+    const voices = Voices.init(allocator, plugin);
     const params = Params.init(allocator);
 
     // Stack objects
@@ -99,6 +100,30 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
     const plugin = try Plugin.init(allocator, host);
     // This looks dangerous, but the object has the pointer so it's chill
     return &plugin.plugin;
+}
+
+// Notify the host that the voices have changed, which will request a main thread refresh from the host
+pub fn notifyHostVoicesChanged(self: *Plugin) bool {
+    if (self.jobs.notify_host_voices_changed) {
+        std.log.warn("Host is already queued for notify voice changed, discarding request", .{});
+        return false;
+    }
+
+    self.jobs.notify_host_voices_changed = true;
+    self.host.requestCallback(self.host);
+    return true;
+}
+
+// Notify the host that the params have changed, which will request a main thread refresh from the host
+pub fn notifyHostParamsChanged(self: *Plugin) bool {
+    if (self.jobs.notify_host_params_changed) {
+        std.log.warn("Host is already queued for notify params changed, discarding request", .{});
+        return false;
+    }
+
+    self.jobs.notify_host_params_changed = true;
+    self.host.requestCallback(self.host);
+    return true;
 }
 
 // Plugin callbacks
@@ -153,11 +178,18 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
     std.debug.assert(clap_process.audio_inputs_count == 0);
     std.debug.assert(clap_process.audio_outputs_count == 1);
 
+    // TODO: Put this on a thread from the threadpool so it can run independently of the audio loop
+    plugin.host.requestCallback(plugin.host);
+
     // Each frame lasts 1 / 48000 seconds. There are typically 256 frames per process call
     const frame_count = clap_process.frames_count;
 
     // The number of events corresponds to how many are expected to occur within my 256 frame range
     const event_count = clap_process.in_events.size(clap_process.in_events);
+
+    if (event_count == 0) {
+        return clap.Process.Status.sleep;
+    }
 
     // Process parameter event changes
     extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
@@ -235,6 +267,7 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
             }
 
             _ = plugin.voices.voices.orderedRemove(i);
+            _ = plugin.notifyHostVoicesChanged();
             if (i > 0) {
                 i -= 1;
             }
@@ -248,6 +281,7 @@ const ext_note_ports = extensions.NotePorts.create();
 const ext_params = extensions.Params.create();
 const ext_state = extensions.State.create();
 const ext_gui = extensions.GUI.create();
+const ext_voice_info = extensions.VoiceInfo.create();
 
 fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const anyopaque {
     std.log.debug("Get extension called {s}!", .{id});
@@ -266,12 +300,14 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
     if (std.mem.eql(u8, std.mem.span(id), clap.ext.gui.id)) {
         return &ext_gui;
     }
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.voice_info.id)) {
+        return &ext_voice_info;
+    }
 
     return null;
 }
 
 fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
-    std.log.debug("onMainThread invoked...", .{});
     const plugin = fromClapPlugin(clap_plugin);
     if (plugin.jobs.should_rescan_params) {
         // Tell the host to rescan the parameters
@@ -292,17 +328,37 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
         }
         plugin.jobs.should_rescan_params = false;
     }
+    if (plugin.jobs.notify_host_params_changed) {
+        if (plugin.host.getExtension(plugin.host, clap.ext.params.id)) |host_header| {
+            var params_host: *clap.ext.params.Host = @constCast(@ptrCast(@alignCast(host_header)));
+            params_host.rescan(plugin.host, .{
+                .values = true,
+            });
+        } else {
+            std.log.err("Unable to query params extension to notify params changed!", .{});
+        }
+        plugin.jobs.notify_host_params_changed = false;
+    }
+
+    if (plugin.jobs.notify_host_voices_changed) {
+        if (plugin.host.getExtension(plugin.host, clap.ext.voice_info.id)) |host_header| {
+            var voice_info_host: *clap.ext.voice_info.Host = @constCast(@ptrCast(@alignCast(host_header)));
+            voice_info_host.changed(plugin.host);
+        } else {
+            std.log.err("Unable to query voice info extension to notify voices changed!", .{});
+        }
+        plugin.jobs.notify_host_voices_changed = false;
+    }
 
     // Update the GUI if exists
-    if (plugin.gui != null) {
-        while (plugin.gui.?.draw()) {}
-        plugin.gui.?.deinit();
-        plugin.gui = null;
-        if (plugin.host.getExtension(plugin.host, clap.ext.gui.id)) |host_header| {
-            var gui_host: *clap.ext.gui.Host = @constCast(@ptrCast(@alignCast(host_header)));
-            std.log.debug("Got GUI host, sending closed event", .{});
-            // Is this a Bitwig bug or is this not being listened to properly?
-            gui_host.closed(plugin.host, true);
+    if (plugin.gui) |gui| {
+        if (gui.is_visible) {
+            if (!gui.draw()) {
+                if (plugin.host.getExtension(plugin.host, clap.ext.gui.id)) |host_header| {
+                    var gui_host: *clap.ext.gui.Host = @constCast(@ptrCast(@alignCast(host_header)));
+                    gui_host.closed(plugin.host, true);
+                }
+            }
         }
     }
 }

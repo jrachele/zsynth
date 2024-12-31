@@ -1,3 +1,5 @@
+const Params = @This();
+
 const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
@@ -9,11 +11,17 @@ const Wave = @import("../audio/waves.zig").Wave;
 const Info = clap.ext.params.Info;
 
 pub const Parameter = enum {
+    // Floats
     Attack,
     Decay,
     Sustain,
     Release,
+
+    // Enums
     WaveShape,
+
+    // Bools
+    ScaleVoices,
 
     // Debug params
     DebugBool1,
@@ -27,15 +35,16 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
     .Decay = 5.0,
     .Sustain = 0.5,
     .Release = 200.0,
+
     .WaveShape = @intFromEnum(Wave.Sine),
+
+    .ScaleVoices = 0.0,
 
     .DebugBool1 = 0.0,
     .DebugBool2 = 0.0,
 };
 
 pub const param_count = std.meta.fields(Parameter).len;
-
-const Params = @This();
 
 values: ParamValues = ParamValues.init(param_defaults),
 mutex: std.Thread.Mutex,
@@ -204,6 +213,23 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
             std.mem.copyForwards(u8, &info.name, "Wave");
             std.mem.copyForwards(u8, &info.module, "Oscillator/Wave");
         },
+        Parameter.ScaleVoices => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.ScaleVoices,
+                .min_value = 0,
+                .max_value = 1,
+                .name = undefined,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.ScaleVoices)),
+                .module = undefined,
+            };
+            std.mem.copyForwards(u8, &info.name, "ScaleVoices");
+            std.mem.copyForwards(u8, &info.module, "Oscillator/ScaleVoices");
+        },
         // DEBUG PARAMS
         Parameter.DebugBool1 => {
             info.* = .{
@@ -285,7 +311,7 @@ pub fn _valueToText(
             const wave: Wave = @enumFromInt(intValue);
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
-        Parameter.DebugBool1, Parameter.DebugBool2 => {
+        Parameter.ScaleVoices, Parameter.DebugBool1, Parameter.DebugBool2 => {
             const bool_value: bool = if (value != 0.0) true else false;
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{if (bool_value) "true" else "false"}) catch return false;
         },
@@ -333,7 +359,7 @@ fn _textToValue(
             return true;
         }
         return false;
-    } else if (param_type == Parameter.DebugBool1 or param_type == Parameter.DebugBool2) {
+    } else if (param_type == Parameter.ScaleVoices or param_type == Parameter.DebugBool1 or param_type == Parameter.DebugBool2) {
         if (std.mem.startsWith(u8, value, "t")) {
             out_value.* = 1.0;
         } else {
@@ -396,6 +422,7 @@ pub fn _flush(
     _: *const clap.events.OutputEvents,
 ) callconv(.C) void {
     const plugin = Plugin.fromClapPlugin(clap_plugin);
+    var params_did_change = false;
     for (0..input_events.size(input_events)) |i| {
         const event = input_events.get(input_events, @intCast(i));
         if (event.space_id != clap.events.core_space_id) {
@@ -409,12 +436,17 @@ pub fn _flush(
             }
 
             plugin.params.set(@enumFromInt(index), param_event.value, .{}) catch unreachable;
+
+            params_did_change = true;
         }
     }
-    for (plugin.voices.voices.items) |*voice| {
-        voice.adsr.attack_time = plugin.params.get(Parameter.Attack);
-        voice.adsr.decay_time = plugin.params.get(Parameter.Decay);
-        voice.adsr.release_time = plugin.params.get(Parameter.Release);
-        voice.adsr.sustain_value = plugin.params.get(Parameter.Sustain);
+    if (params_did_change) {
+        for (plugin.voices.voices.items) |*voice| {
+            voice.adsr.attack_time = plugin.params.get(Parameter.Attack);
+            voice.adsr.decay_time = plugin.params.get(Parameter.Decay);
+            voice.adsr.release_time = plugin.params.get(Parameter.Release);
+            voice.adsr.original_sustain_value = plugin.params.get(Parameter.Sustain);
+        }
+        _ = plugin.notifyHostParamsChanged();
     }
 }
