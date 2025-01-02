@@ -29,10 +29,9 @@ wave_table: WaveTable,
 jobs: Jobs = .{},
 
 const Jobs = packed struct(u32) {
-    should_rescan_params: bool = false,
     notify_host_params_changed: bool = false,
     notify_host_voices_changed: bool = false,
-    _: u29 = 0,
+    _: u30 = 0,
 };
 
 pub const desc = clap.Plugin.Descriptor{
@@ -168,7 +167,7 @@ fn _reset(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     // Tell the host to rescan the parameters
     const plugin = fromClapPlugin(clap_plugin);
-    plugin.jobs.should_rescan_params = true;
+    plugin.jobs.notify_host_params_changed = true;
     plugin.host.requestCallback(plugin.host);
 }
 
@@ -178,30 +177,32 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
     std.debug.assert(clap_process.audio_inputs_count == 0);
     std.debug.assert(clap_process.audio_outputs_count == 1);
 
-    // TODO: Put this on a thread from the threadpool so it can run independently of the audio loop
-    plugin.host.requestCallback(plugin.host);
-
     // Each frame lasts 1 / 48000 seconds. There are typically 256 frames per process call
     const frame_count = clap_process.frames_count;
 
     // The number of events corresponds to how many are expected to occur within my 256 frame range
-    const event_count = clap_process.in_events.size(clap_process.in_events);
+    const input_event_count = clap_process.in_events.size(clap_process.in_events);
 
-    if (event_count == 0) {
-        return clap.Process.Status.sleep;
-    }
-
-    // Process parameter event changes
-    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
+    const param_event_count = plugin.params.events.items.len;
 
     const output_buffer_left = clap_process.audio_outputs[0].data32.?[0];
     const output_buffer_right = clap_process.audio_outputs[0].data32.?[1];
+
+    // Clear the output buffers of any leftover memory
+    for (0..frame_count) |i| {
+        output_buffer_left[i] = 0;
+        output_buffer_right[i] = 0;
+    }
+
+    if (input_event_count == 0 and param_event_count == 0 and plugin.voices.getVoiceCount() == 0) {
+        return clap.Process.Status.sleep;
+    }
 
     var event_index: u32 = 0;
     var current_frame: u32 = 0;
     while (current_frame < frame_count) {
         // Process all events scheduled for the current frame
-        while (event_index < event_count) {
+        while (event_index < input_event_count) {
             const event = clap_process.in_events.get(clap_process.in_events, event_index);
             if (event.sample_offset > current_frame) {
                 // Stop if the event time is beyond the current frame
@@ -219,7 +220,7 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         if (plugin.params.mutex.tryLock()) {
             defer plugin.params.mutex.unlock();
 
-            while (plugin.params.events.popOrNull()) |event| {
+            while (plugin.params.events.popOrNull()) |*event| {
                 const event_header: *clap.events.Header = @constCast(@alignCast(&event.header));
                 event_header.sample_offset = current_frame;
                 if (!clap_process.out_events.tryPush(clap_process.out_events, event_header)) {
@@ -233,7 +234,7 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         var next_frame: u32 = frame_count; // Default to the end of the frame buffer
 
         // If we still have an event left over, then the next frame begins at where the event begins
-        if (event_index < event_count) {
+        if (event_index < input_event_count) {
             const next_event = clap_process.in_events.get(clap_process.in_events, event_index);
             next_frame = next_event.sample_offset;
         }
@@ -242,6 +243,9 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         audio.renderAudio(plugin, current_frame, next_frame, output_buffer_left, output_buffer_right);
         current_frame = next_frame;
     }
+
+    // Process parameter event changes
+    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
 
     var i: u32 = 0;
     while (i < plugin.voices.voices.items.len) : (i += 1) {
@@ -309,30 +313,12 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
 
 fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     const plugin = fromClapPlugin(clap_plugin);
-    if (plugin.jobs.should_rescan_params) {
-        // Tell the host to rescan the parameters
-        std.log.debug("Rescanning parameters...", .{});
-        const params_host = plugin.host.getExtension(plugin.host, clap.ext.params.id);
-        if (params_host == null) {
-            std.log.debug("Could not get params host!", .{});
-        } else {
-            const p: *const clap.ext.params.Host = @ptrCast(@alignCast(params_host.?));
-            std.log.debug("Clearing and rescanning all", .{});
-            var i: usize = 0;
-            while (i < Params.param_count) : (i += 1) {
-                p.clear(plugin.host, @enumFromInt(i), .{ .all = true });
-            }
-            p.rescan(plugin.host, .{
-                .all = true,
-            });
-        }
-        plugin.jobs.should_rescan_params = false;
-    }
     if (plugin.jobs.notify_host_params_changed) {
         if (plugin.host.getExtension(plugin.host, clap.ext.params.id)) |host_header| {
+            std.log.debug("Notifying host that params changed", .{});
             var params_host: *clap.ext.params.Host = @constCast(@ptrCast(@alignCast(host_header)));
             params_host.rescan(plugin.host, .{
-                .values = true,
+                .all = true,
             });
         } else {
             std.log.err("Unable to query params extension to notify params changed!", .{});
@@ -342,6 +328,7 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     if (plugin.jobs.notify_host_voices_changed) {
         if (plugin.host.getExtension(plugin.host, clap.ext.voice_info.id)) |host_header| {
+            std.log.debug("Notifying host that voices changed", .{});
             var voice_info_host: *clap.ext.voice_info.Host = @constCast(@ptrCast(@alignCast(host_header)));
             voice_info_host.changed(plugin.host);
         } else {

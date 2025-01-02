@@ -2,6 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Step = std.Build.Step;
 
+const util = @import("util.zig");
+
 pub fn build(b: *std.Build) void {
     const generate_wavetables_comptime = b.option(
         bool,
@@ -125,6 +127,13 @@ pub const CreateClapPluginStep = struct {
                     _ = try dir.updateFile("zig-out/lib/libzsynth.dylib", dir, "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth", .{});
                     _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/ZSynth.clap/Contents/info.plist", .{});
                     _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/ZSynth.clap/Contents/PkgInfo", .{});
+                    // var buffer: [1024]u8 = undefined;
+                    // var fba = std.heap.FixedBufferAllocator.init(&buffer);
+                    // const allocator = fba.allocator();
+                    // const source_dir = try dir.openDir("zig-out/lib/ZSynth.clap/", .{});
+                    // const dest_path = try std.fs.realpathAlloc(allocator, "~/Library/Audio/Plug-Ins/CLAP/ZSynth.clap");
+                    // defer allocator.free(dest_path);
+                    // try util.copyDirRecursiveAbsolute(allocator, source_dir, dest_path);
                 },
                 .linux => {
                     _ = try dir.updateFile("zig-out/lib/libzsynth.so", dir, "zig-out/lib/zsynth.clap", .{});

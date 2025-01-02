@@ -20,8 +20,13 @@ window: *glfw.Window,
 plugin: *Plugin,
 allocator: std.mem.Allocator,
 is_visible: bool = false,
+thread: std.Thread,
 
-const window_title = "ZSynth";
+fn threadLoop(self: *GUI) void {
+    while (self.window.shouldClose() != true) {
+        self.plugin.host.requestCallback(self.plugin.host);
+    }
+}
 
 pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
     std.log.debug("GUI init() called", .{});
@@ -38,6 +43,7 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
     glfw.windowHintTyped(.client_api, .opengl_api);
     glfw.windowHintTyped(.doublebuffer, true);
 
+    const window_title = "ZSynth";
     const window = try glfw.Window.create(800, 500, window_title, null);
     errdefer window.destroy();
 
@@ -60,10 +66,13 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
     zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
 
+    const thread = try std.Thread.spawn(.{ .allocator = allocator }, threadLoop, .{gui});
+
     gui.* = .{
         .window = window,
         .plugin = plugin,
         .allocator = allocator,
+        .thread = thread,
     };
 
     return gui;
@@ -73,10 +82,16 @@ pub fn deinit(self: *GUI) void {
     std.log.debug("GUI deinit() called", .{});
     zgui.backend.deinit();
     zgui.deinit();
+    self.window.setShouldClose(true);
+    self.thread.join();
     self.window.destroy();
     glfw.terminate();
     self.plugin.gui = null;
     self.allocator.destroy(self);
+}
+
+fn setTitle(self: *GUI, title: [:0]const u8) void {
+    self.window.setTitle(title);
 }
 
 pub fn show(self: *GUI) void {
@@ -215,8 +230,9 @@ pub fn create() clap.ext.gui.Plugin {
     };
 }
 
-fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, _: bool) callconv(.C) bool {
-    return true;
+fn _isApiSupported(_: *const clap.Plugin, api: [*:0]const u8, is_floating: bool) callconv(.C) bool {
+    _ = api;
+    return is_floating;
 }
 /// returns true if the plugin has a preferred api. the host has no obligation to honor the plugin's preference,
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
@@ -233,8 +249,12 @@ fn _getPreferredApi(_: *const clap.Plugin, _: *[*:0]const u8, is_floating: *bool
 /// returns true if the gui is successfully created.
 fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bool) callconv(.C) bool {
     _ = api;
-    _ = is_floating;
 
+    if (is_floating == false) {
+        return false;
+    }
+
+    std.log.debug("Host called GUI create!", .{});
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui != null) {
         std.log.info("GUI has already been initialized, earlying out", .{});
@@ -247,12 +267,13 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
 }
 /// free all resources associated with the gui
 fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
+    std.log.debug("Host called GUI destroy!", .{});
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
 
-    if (plugin.gui != null) {
-        plugin.gui.?.deinit();
-        plugin.gui = null;
+    if (plugin.gui) |gui| {
+        gui.deinit();
     }
+    plugin.gui = null;
 }
 /// set the absolute gui scaling factor, overriding any os info. should not be
 /// used if the windowing api relies upon logical pixels. if the plugin prefers
@@ -261,7 +282,7 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 /// applied. returns false when the call was ignored or scaling was not applied.
 fn _setScale(_: *const clap.Plugin, scale: f64) callconv(.C) bool {
     _ = scale;
-    return false;
+    return true;
 }
 /// get the current size of the plugin gui. `Plugin.create` must have been called prior to
 /// asking for the size. returns true and populates `width.*` and `height.*` if the plugin
@@ -291,7 +312,7 @@ fn _getResizeHints(_: *const clap.Plugin, hints: *clap.ext.gui.ResizeHints) call
 fn _adjustSize(_: *const clap.Plugin, width: *u32, height: *u32) callconv(.C) bool {
     _ = width;
     _ = height;
-    return true;
+    return false;
 }
 /// sets the plugin's window size. returns true if the
 /// plugin successfully resized its window to the given size.
@@ -311,9 +332,13 @@ fn _setTransient(_: *const clap.Plugin, window: *const clap.ext.gui.Window) call
     return true;
 }
 /// suggests a window title. only for floating windows.
-fn _suggestTitle(_: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {
-    _ = title;
-    return true;
+fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        gui.setTitle(std.mem.span(title));
+        return true;
+    }
+    return false;
 }
 /// show the plugin window. returns true on success.
 fn _show(clap_plugin: *const clap.Plugin) callconv(.C) bool {

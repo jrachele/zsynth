@@ -441,6 +441,7 @@ pub fn _flush(
         }
     }
     if (params_did_change) {
+        std.log.debug("Parameters changed, updating voices and notifying host", .{});
         for (plugin.voices.voices.items) |*voice| {
             voice.adsr.attack_time = plugin.params.get(Parameter.Attack);
             voice.adsr.decay_time = plugin.params.get(Parameter.Decay);
