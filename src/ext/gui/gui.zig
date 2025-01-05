@@ -191,6 +191,7 @@ fn draw(self: *GUI) bool {
             },
         },
     )) {
+        zgui.text("Voices: {} / {}", .{ self.plugin.voices.getVoiceCount(), self.plugin.voices.getVoiceCapacity() });
         // Populate the widgets based on the parameters
         // Mimick what CLAP does
         zgui.text("Parameters", .{});

@@ -246,7 +246,7 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool1)),
                 .module = undefined,
             };
-            std.mem.copyForwards(u8, &info.name, "Bool1");
+            std.mem.copyForwards(u8, &info.name, "Use Thread Pool");
             std.mem.copyForwards(u8, &info.module, "Debug/Bool1");
         },
         Parameter.DebugBool2 => {

@@ -29,9 +29,6 @@ wave_table: WaveTable,
 jobs: Jobs = .{},
 job_mutex: std.Thread.Mutex,
 
-// TODO: Move this stuff to the host threadpool for stability
-loop_thread: ?std.Thread,
-
 const Jobs = packed struct(u32) {
     notify_host_params_changed: bool = false,
     notify_host_voices_changed: bool = false,
@@ -89,22 +86,12 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
         .wave_table = wave_table,
         .gui = null,
         .job_mutex = .{},
-        .loop_thread = null,
     };
-
-    // Spawn main thread loop thread
-    const thread = try std.Thread.spawn(.{}, beginMainThreadLoop, .{plugin});
-    plugin.loop_thread = thread;
 
     return plugin;
 }
 
 pub fn deinit(self: *Plugin) void {
-    if (self.loop_thread) |thread| {
-        self.loop_thread = null;
-        thread.join();
-    }
-
     self.voices.deinit();
     self.params.deinit();
     self.allocator.destroy(self);
@@ -216,11 +203,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         output_buffer_right[i] = 0;
     }
 
-    // const param_event_count = plugin.params.events.items.len;
-    // if (input_event_count == 0 and param_event_count == 0 and plugin.voices.getVoiceCount() == 0) {
-    //     return clap.Process.Status.sleep;
-    // }
-
     // Process parameter event changes
     extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
 
@@ -286,6 +268,8 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
             }
         }
     }
+
+    plugin.host.requestCallback(plugin.host);
     return clap.Process.Status.@"continue";
 }
 
@@ -295,6 +279,7 @@ const ext_params = extensions.Params.create();
 const ext_state = extensions.State.create();
 const ext_gui = extensions.GUI.create();
 const ext_voice_info = extensions.VoiceInfo.create();
+const ext_thread_pool = extensions.ThreadPool.create();
 
 fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const anyopaque {
     std.log.debug("Get extension called {s}!", .{id});
@@ -315,6 +300,9 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
     }
     if (std.mem.eql(u8, std.mem.span(id), clap.ext.voice_info.id)) {
         return &ext_voice_info;
+    }
+    if (std.mem.eql(u8, std.mem.span(id), clap.ext.thread_pool.id)) {
+        return &ext_thread_pool;
     }
 
     return null;

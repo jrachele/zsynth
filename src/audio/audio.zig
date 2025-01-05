@@ -4,15 +4,15 @@ const clap = @import("clap-bindings");
 
 const Plugin = @import("../plugin.zig");
 const Params = @import("../ext/params.zig");
-const waves = @import("waves.zig");
+const ThreadPool = @import("../ext/thread_pool.zig");
 const ADSR = @import("adsr.zig");
 const Voices = @import("voices.zig");
+
+const waves = @import("waves.zig");
 
 const Parameter = Params.Parameter;
 const Voice = Voices.Voice;
 const Expression = Voices.Expression;
-
-const Wave = waves.Wave;
 
 fn calculatePhaseOffsetForSecondVoice(voice: *const Voice, previous_voice: ?*const Voice, sample_rate: f64) u64 {
     if (previous_voice) |prev| {
@@ -111,43 +111,30 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
 }
 
 pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
-    const wave_value: u32 = @intFromFloat(plugin.params.values.get(Parameter.WaveShape));
-    const wave_type: Wave = std.meta.intToEnum(Wave, wave_value) catch Wave.Sine;
+    plugin.voices.render_payload = .{
+        .data_mutex = .{},
+        .start = start,
+        .end = end,
+        .output_left = output_left,
+        .output_right = output_right,
+    };
 
-    var index = start;
-    while (index < end) : (index += 1) {
-        var voice_sum_l: f64 = 0;
-        var voice_sum_r: f64 = 0;
-        var voice_sum_mono: f64 = 0;
-        for (plugin.voices.voices.items) |*voice| {
-            var wave: f64 = undefined;
-            const t: f64 = @floatFromInt(voice.elapsed_frames);
-
-            // retrieve the wave data from the pre-calculated table
-            wave = waves.get(&plugin.wave_table, wave_type, plugin.sample_rate.?, voice.getTunedKey(), t);
-
-            // Elapse the voice time by a frame and update envelope
-            voice.elapsed_frames += 1;
-
-            const pan = voice.expression_values.get(Expression.pan);
-            voice_sum_mono += wave * voice.adsr.value * 0.5;
-            voice_sum_l += voice_sum_mono * (1 - pan);
-            voice_sum_r += voice_sum_mono * pan;
-
-            const dt = (1 / plugin.sample_rate.?) * 1000;
-            voice.adsr.update(dt);
+    var did_render_audio = false;
+    const should_use_threadpool = builtin.mode != .Debug or plugin.params.get(Parameter.DebugBool1) == 1.0;
+    if (should_use_threadpool) {
+        if (plugin.host.getExtension(plugin.host, clap.ext.thread_pool.id)) |ext_raw| {
+            const thread_pool: *const clap.ext.thread_pool.Host = @ptrCast(@alignCast(ext_raw));
+            did_render_audio = thread_pool.requestExec(plugin.host, @intCast(plugin.voices.getVoiceCount()));
+            if (!did_render_audio) {
+                std.log.debug("Unable to dispatch voices to thread pool! Num voices: {d}", .{plugin.voices.getVoiceCount()});
+            }
         }
+    }
 
-        var output_l: f32 = @floatCast(voice_sum_l);
-        var output_r: f32 = @floatCast(voice_sum_r);
-
-        if (plugin.params.get(.ScaleVoices) == 1.0) {
-            // Apply scaling to prevent the amplitude to go too crazy
-            const scaling = 1.0 / @max(1, std.math.sqrt(@as(f32, @floatFromInt(plugin.voices.getVoiceCount()))));
-            output_l *= scaling;
-            output_r *= scaling;
+    // If the thread pool wasn't available, synchronously render all voices individually
+    if (!did_render_audio) {
+        for (0..plugin.voices.getVoiceCount()) |i| {
+            ThreadPool._exec(&plugin.plugin, @intCast(i));
         }
-        output_left[index] = output_l;
-        output_right[index] = output_r;
     }
 }
