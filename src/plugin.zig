@@ -7,7 +7,7 @@ const options = @import("options");
 const extensions = @import("extensions.zig");
 
 const Params = @import("ext/params.zig");
-const GUI = @import("ext/gui.zig");
+const GUI = @import("ext/gui/gui.zig");
 const Voices = @import("audio/voices.zig");
 
 const audio = @import("audio/audio.zig");
@@ -27,6 +27,10 @@ gui: ?*GUI,
 wave_table: WaveTable,
 
 jobs: Jobs = .{},
+job_mutex: std.Thread.Mutex,
+
+// TODO: Move this stuff to the host threadpool for stability
+loop_thread: ?std.Thread,
 
 const Jobs = packed struct(u32) {
     notify_host_params_changed: bool = false,
@@ -84,12 +88,23 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
         .params = params,
         .wave_table = wave_table,
         .gui = null,
+        .job_mutex = .{},
+        .loop_thread = null,
     };
+
+    // Spawn main thread loop thread
+    const thread = try std.Thread.spawn(.{}, beginMainThreadLoop, .{plugin});
+    plugin.loop_thread = thread;
 
     return plugin;
 }
 
 pub fn deinit(self: *Plugin) void {
+    if (self.loop_thread) |thread| {
+        self.loop_thread = null;
+        thread.join();
+    }
+
     self.voices.deinit();
     self.params.deinit();
     self.allocator.destroy(self);
@@ -103,25 +118,29 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
 
 // Notify the host that the voices have changed, which will request a main thread refresh from the host
 pub fn notifyHostVoicesChanged(self: *Plugin) bool {
+    self.job_mutex.lock();
+    defer self.job_mutex.unlock();
+
     if (self.jobs.notify_host_voices_changed) {
         std.log.warn("Host is already queued for notify voice changed, discarding request", .{});
         return false;
     }
 
     self.jobs.notify_host_voices_changed = true;
-    self.host.requestCallback(self.host);
     return true;
 }
 
 // Notify the host that the params have changed, which will request a main thread refresh from the host
 pub fn notifyHostParamsChanged(self: *Plugin) bool {
+    self.job_mutex.lock();
+    defer self.job_mutex.unlock();
+
     if (self.jobs.notify_host_params_changed) {
         std.log.warn("Host is already queued for notify params changed, discarding request", .{});
         return false;
     }
 
     self.jobs.notify_host_params_changed = true;
-    self.host.requestCallback(self.host);
     return true;
 }
 
@@ -137,15 +156,21 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
     plugin.deinit();
 }
 
+fn beginMainThreadLoop(plugin: *Plugin) void {
+    while (plugin.loop_thread != null) {
+        plugin.host.requestCallback(plugin.host);
+    }
+}
+
 fn _activate(
     clap_plugin: *const clap.Plugin,
     sample_rate: f64,
     _: u32,
     _: u32,
 ) callconv(.C) bool {
+    std.log.debug("Activate", .{});
     const plugin = fromClapPlugin(clap_plugin);
     plugin.sample_rate = sample_rate;
-
     return true;
 }
 
@@ -167,8 +192,7 @@ fn _reset(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     // Tell the host to rescan the parameters
     const plugin = fromClapPlugin(clap_plugin);
-    plugin.jobs.notify_host_params_changed = true;
-    plugin.host.requestCallback(plugin.host);
+    _ = plugin.notifyHostParamsChanged();
 }
 
 // This occurs on the audio thread
@@ -183,8 +207,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
     // The number of events corresponds to how many are expected to occur within my 256 frame range
     const input_event_count = clap_process.in_events.size(clap_process.in_events);
 
-    const param_event_count = plugin.params.events.items.len;
-
     const output_buffer_left = clap_process.audio_outputs[0].data32.?[0];
     const output_buffer_right = clap_process.audio_outputs[0].data32.?[1];
 
@@ -194,9 +216,13 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         output_buffer_right[i] = 0;
     }
 
-    if (input_event_count == 0 and param_event_count == 0 and plugin.voices.getVoiceCount() == 0) {
-        return clap.Process.Status.sleep;
-    }
+    // const param_event_count = plugin.params.events.items.len;
+    // if (input_event_count == 0 and param_event_count == 0 and plugin.voices.getVoiceCount() == 0) {
+    //     return clap.Process.Status.sleep;
+    // }
+
+    // Process parameter event changes
+    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
 
     var event_index: u32 = 0;
     var current_frame: u32 = 0;
@@ -216,20 +242,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
             }
         }
 
-        // Process GUI parameter event changes
-        if (plugin.params.mutex.tryLock()) {
-            defer plugin.params.mutex.unlock();
-
-            while (plugin.params.events.popOrNull()) |*event| {
-                const event_header: *clap.events.Header = @constCast(@alignCast(&event.header));
-                event_header.sample_offset = current_frame;
-                if (!clap_process.out_events.tryPush(clap_process.out_events, event_header)) {
-                    std.log.err("Unable to notify DAW of parameter event changes!", .{});
-                    return clap.Process.Status.@"error";
-                }
-            }
-        }
-
         // Determine the next frame to render up to
         var next_frame: u32 = frame_count; // Default to the end of the frame buffer
 
@@ -243,9 +255,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         audio.renderAudio(plugin, current_frame, next_frame, output_buffer_left, output_buffer_right);
         current_frame = next_frame;
     }
-
-    // Process parameter event changes
-    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
 
     var i: u32 = 0;
     while (i < plugin.voices.voices.items.len) : (i += 1) {
@@ -313,12 +322,16 @@ fn _getExtension(_: *const clap.Plugin, id: [*:0]const u8) callconv(.C) ?*const 
 
 fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     const plugin = fromClapPlugin(clap_plugin);
+
     if (plugin.jobs.notify_host_params_changed) {
+        plugin.job_mutex.lock();
+        defer plugin.job_mutex.unlock();
         if (plugin.host.getExtension(plugin.host, clap.ext.params.id)) |host_header| {
             std.log.debug("Notifying host that params changed", .{});
             var params_host: *clap.ext.params.Host = @constCast(@ptrCast(@alignCast(host_header)));
             params_host.rescan(plugin.host, .{
-                .all = true,
+                .text = true,
+                .values = true,
             });
         } else {
             std.log.err("Unable to query params extension to notify params changed!", .{});
@@ -327,6 +340,8 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
     }
 
     if (plugin.jobs.notify_host_voices_changed) {
+        plugin.job_mutex.lock();
+        defer plugin.job_mutex.unlock();
         if (plugin.host.getExtension(plugin.host, clap.ext.voice_info.id)) |host_header| {
             std.log.debug("Notifying host that voices changed", .{});
             var voice_info_host: *clap.ext.voice_info.Host = @constCast(@ptrCast(@alignCast(host_header)));
@@ -339,13 +354,6 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     // Update the GUI if exists
     if (plugin.gui) |gui| {
-        if (gui.is_visible) {
-            if (!gui.draw()) {
-                if (plugin.host.getExtension(plugin.host, clap.ext.gui.id)) |host_header| {
-                    var gui_host: *clap.ext.gui.Host = @constCast(@ptrCast(@alignCast(host_header)));
-                    gui_host.closed(plugin.host, true);
-                }
-            }
-        }
+        gui.update();
     }
 }

@@ -415,31 +415,52 @@ fn _textToValue(
     return true;
 }
 
+fn processEvent(plugin: *Plugin, event: *const clap.events.Header) bool {
+    if (event.space_id != clap.events.core_space_id) {
+        return false;
+    }
+    if (event.type == .param_value) {
+        const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
+        const index = @intFromEnum(param_event.param_id);
+        if (index >= param_count) {
+            return false;
+        }
+
+        plugin.params.set(@enumFromInt(index), param_event.value, .{}) catch unreachable;
+        return true;
+    }
+    return false;
+}
+
 // Handle parameter changes
 pub fn _flush(
     clap_plugin: *const clap.Plugin,
     input_events: *const clap.events.InputEvents,
-    _: *const clap.events.OutputEvents,
+    output_events: *const clap.events.OutputEvents,
 ) callconv(.C) void {
     const plugin = Plugin.fromClapPlugin(clap_plugin);
     var params_did_change = false;
     for (0..input_events.size(input_events)) |i| {
         const event = input_events.get(input_events, @intCast(i));
-        if (event.space_id != clap.events.core_space_id) {
-            continue;
-        }
-        if (event.type == .param_value) {
-            const param_event: *const clap.events.ParamValue = @ptrCast(@alignCast(event));
-            const index = @intFromEnum(param_event.param_id);
-            if (index >= param_count) {
-                return;
-            }
-
-            plugin.params.set(@enumFromInt(index), param_event.value, .{}) catch unreachable;
-
+        if (processEvent(plugin, event)) {
             params_did_change = true;
         }
     }
+
+    // Process GUI parameter event changes
+    if (plugin.params.mutex.tryLock()) {
+        defer plugin.params.mutex.unlock();
+
+        if (plugin.params.events.items.len > 0) {
+            params_did_change = true;
+        }
+        while (plugin.params.events.popOrNull()) |*event| {
+            if (!output_events.tryPush(output_events, &event.header)) {
+                std.debug.panic("Unable to notify DAW of parameter event changes!", .{});
+            }
+        }
+    }
+
     if (params_did_change) {
         std.log.debug("Parameters changed, updating voices and notifying host", .{});
         for (plugin.voices.voices.items) |*voice| {

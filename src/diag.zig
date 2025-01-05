@@ -2,7 +2,7 @@ const std = @import("std");
 const clap = @import("clap-bindings");
 
 const Plugin = @import("plugin.zig");
-const GUI = @import("ext/gui.zig");
+const GUI = @import("ext/gui/gui.zig");
 
 const MockHost = struct {
     clap_host: clap.Host,
@@ -77,8 +77,10 @@ pub fn main() !void {
 
     host.setPlugin(plugin);
 
-    var gui = try GUI.init(allocator, plugin);
+    var gui = try GUI.init(allocator, plugin, true);
     defer gui.deinit();
 
-    while (gui.draw()) {}
+    while (gui.window != null) {
+        gui.update();
+    }
 }

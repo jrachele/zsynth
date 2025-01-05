@@ -3,7 +3,7 @@
 ZSynth is a light-weight digital synthesizer audio plugin written in Zig.
 It uses
 Zig-friendly [CLAP](https://github.com/free-audio/clap) [bindings](https://git.sr.ht/~interpunct/clap-zig-bindings), and
-relies on no other libraries apart from `zigplotlib` for diagnostic graphs.
+leverages ImGui to render the plugin GUI.
 
 ## Features
 

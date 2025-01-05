@@ -10,43 +10,81 @@ const zgui = @import("zgui");
 const glfw = @import("zglfw");
 const zopengl = @import("zopengl");
 
-const Plugin = @import("../plugin.zig");
-const Params = @import("params.zig");
+const Plugin = @import("../../plugin.zig");
+const Params = @import("../params.zig");
 
-const waves = @import("../audio/waves.zig");
+// TODO: Figure out a nice way to import depending on target
+const cocoa = @import("cocoa.zig");
+
+const waves = @import("../../audio/waves.zig");
 const Wave = waves.Wave;
 
-window: *glfw.Window,
 plugin: *Plugin,
 allocator: std.mem.Allocator,
-is_visible: bool = false,
-thread: std.Thread,
 
-fn threadLoop(self: *GUI) void {
-    while (self.window.shouldClose() != true) {
-        self.plugin.host.requestCallback(self.plugin.host);
+window: ?*glfw.Window,
+is_floating: bool,
+cocoa_data: ?*anyopaque,
+
+const gl_major = 4;
+const gl_minor = 0;
+
+pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*GUI {
+    std.log.debug("GUI init() called", .{});
+
+    if (plugin.gui != null) {
+        std.log.err("GUI has already been initialized!", .{});
+        return error.AlreadyInitialized;
     }
+
+    const gui = try allocator.create(GUI);
+    gui.* = .{
+        .plugin = plugin,
+        .allocator = allocator,
+        .is_floating = is_floating,
+        .window = null,
+        // TODO: Make this generic and depend on the target
+        .cocoa_data = null,
+    };
+
+    try gui.createWindow();
+
+    return gui;
 }
 
-pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
-    std.log.debug("GUI init() called", .{});
-    const gui = try allocator.create(GUI);
+pub fn deinit(self: *GUI) void {
+    std.log.debug("GUI deinit() called", .{});
+    if (self.window != null) {
+        self.destroyWindow();
+    }
+    self.plugin.gui = null;
+    self.allocator.destroy(self);
+}
 
+fn createWindow(self: *GUI) !void {
+    std.log.debug("Creating window.", .{});
+    if (self.window != null) {
+        std.log.err("Window already created! Ignoring...", .{});
+        return error.WindowAlreadyCreated;
+    }
+
+    // Initialize ImGui
+    zgui.init(self.plugin.allocator);
+    zgui.io.setIniFilename(null);
+
+    // Initialize GLFW
     try glfw.init();
 
-    const gl_major = 4;
-    const gl_minor = 0;
     glfw.windowHintTyped(.context_version_major, gl_major);
     glfw.windowHintTyped(.context_version_minor, gl_minor);
     glfw.windowHintTyped(.opengl_profile, .opengl_core_profile);
     glfw.windowHintTyped(.opengl_forward_compat, true);
     glfw.windowHintTyped(.client_api, .opengl_api);
     glfw.windowHintTyped(.doublebuffer, true);
-
+    glfw.windowHintTyped(.visible, self.is_floating);
     const window_title = "ZSynth";
     const window = try glfw.Window.create(800, 500, window_title, null);
     errdefer window.destroy();
-
     window.setSizeLimits(100, 100, -1, -1);
 
     glfw.makeContextCurrent(window);
@@ -54,57 +92,75 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin) !*GUI {
 
     try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
 
-    zgui.init(plugin.allocator);
-
     const scale_factor = scale_factor: {
         const scale = window.getContentScale();
         break :scale_factor @max(scale[0], scale[1]);
     };
     _ = zgui.io.addFontFromMemory(static_data.font, std.math.floor(16.0 * scale_factor));
 
-    zgui.io.setIniFilename(null);
     zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
 
-    const thread = try std.Thread.spawn(.{ .allocator = allocator }, threadLoop, .{gui});
-
-    gui.* = .{
-        .window = window,
-        .plugin = plugin,
-        .allocator = allocator,
-        .thread = thread,
-    };
-
-    return gui;
+    self.window = window;
 }
 
-pub fn deinit(self: *GUI) void {
-    std.log.debug("GUI deinit() called", .{});
-    zgui.backend.deinit();
-    zgui.deinit();
-    self.window.setShouldClose(true);
-    self.thread.join();
-    self.window.destroy();
-    glfw.terminate();
-    self.plugin.gui = null;
-    self.allocator.destroy(self);
+fn destroyWindow(self: *GUI) void {
+    std.log.debug("Destroying window.", .{});
+
+    var windowWasDestroyed = false;
+    if (self.window) |window| {
+        zgui.backend.deinit();
+        zgui.deinit();
+        window.destroy();
+        glfw.terminate();
+        windowWasDestroyed = true;
+    }
+    self.window = null;
+
+    if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
+        var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
+        gui_host.closed(self.plugin.host, windowWasDestroyed);
+    }
 }
 
-fn setTitle(self: *GUI, title: [:0]const u8) void {
-    self.window.setTitle(title);
-}
+pub fn show(self: *GUI) !void {
+    // Create the window if it doesn't exist
+    if (self.window == null) {
+        try self.createWindow();
+    }
 
-pub fn show(self: *GUI) void {
-    self.is_visible = true;
+    if (self.window) |window| {
+        window.setAttribute(.visible, true);
+        if (self.cocoa_data) |cocoa_data| {
+            cocoa.setVisibility(cocoa_data, true);
+        }
+    }
 }
 
 pub fn hide(self: *GUI) void {
-    self.is_visible = false;
+    if (self.window) |window| {
+        window.setAttribute(.visible, false);
+        if (self.cocoa_data) |cocoa_data| {
+            cocoa.setVisibility(cocoa_data, false);
+        }
+    }
 }
 
-pub fn draw(self: *GUI) bool {
-    var window = self.window;
-    if (window.shouldClose()) return false;
+pub fn update(self: *GUI) void {
+    if (self.window) |window| {
+        if (window.shouldClose()) {
+            std.log.info("Window requested close, closing!", .{});
+            self.destroyWindow();
+            return;
+        }
+        _ = self.draw();
+    }
+}
+
+fn draw(self: *GUI) bool {
+    if (self.window == null) return false;
+
+    var window = self.window.?;
     if (window.getKey(.escape) == .press) {
         window.setShouldClose(true);
         return false;
@@ -204,9 +260,18 @@ pub fn draw(self: *GUI) bool {
     return true;
 }
 
+fn setTitle(self: *GUI, title: [:0]const u8) void {
+    if (self.window) |window| {
+        window.setTitle(title);
+    }
+}
+
 fn getSize(self: *const GUI) [2]u32 {
-    const size = self.window.getSize();
-    return [2]u32{ @intCast(size[0]), @intCast(size[1]) };
+    if (self.window) |window| {
+        const size = window.getSize();
+        return [2]u32{ @intCast(size[0]), @intCast(size[1]) };
+    }
+    return [2]u32{ 0, 0 };
 }
 
 // Clap specific stuff
@@ -230,9 +295,8 @@ pub fn create() clap.ext.gui.Plugin {
     };
 }
 
-fn _isApiSupported(_: *const clap.Plugin, api: [*:0]const u8, is_floating: bool) callconv(.C) bool {
-    _ = api;
-    return is_floating;
+fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, _: bool) callconv(.C) bool {
+    return true;
 }
 /// returns true if the plugin has a preferred api. the host has no obligation to honor the plugin's preference,
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
@@ -250,10 +314,6 @@ fn _getPreferredApi(_: *const clap.Plugin, _: *[*:0]const u8, is_floating: *bool
 fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bool) callconv(.C) bool {
     _ = api;
 
-    if (is_floating == false) {
-        return false;
-    }
-
     std.log.debug("Host called GUI create!", .{});
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui != null) {
@@ -261,7 +321,7 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
         return false;
     }
 
-    plugin.gui = GUI.init(plugin.allocator, plugin) catch null;
+    plugin.gui = GUI.init(plugin.allocator, plugin, is_floating) catch null;
 
     return plugin.gui != null;
 }
@@ -321,15 +381,26 @@ fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
     _ = height;
     return false;
 }
+
 /// embeds the plugin window into the given window. returns true on success.
-fn _setParent(_: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
-    _ = window;
+fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gui.Window) callconv(.C) bool {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        if (gui.window) |window| {
+            if (glfw.getCocoaWindow(window)) |cocoa_window| {
+                cocoa.setParent(cocoa_window, plugin_window.data.cocoa);
+                gui.cocoa_data = plugin_window.data.cocoa;
+                return true;
+            }
+        }
+    }
+
     return false;
 }
 /// sets the plugin window to stay above the given window. returns true on success.
 fn _setTransient(_: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
     _ = window;
-    return true;
+    return false;
 }
 /// suggests a window title. only for floating windows.
 fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {
@@ -342,18 +413,21 @@ fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv
 }
 /// show the plugin window. returns true on success.
 fn _show(clap_plugin: *const clap.Plugin) callconv(.C) bool {
+    std.log.debug("GUI show() called", .{});
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui) |gui| {
-        gui.show();
+        gui.show() catch return false;
         return true;
     }
 
     return false;
 }
+
 /// hide the plugin window. this method does not free the
 /// resources, just hides the window content, yet it may be
 /// a good idea to stop painting timers. returns true on success.
 fn _hide(clap_plugin: *const clap.Plugin) callconv(.C) bool {
+    std.log.debug("GUI hide() called", .{});
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui) |gui| {
         gui.hide();

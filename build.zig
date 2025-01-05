@@ -17,12 +17,6 @@ pub fn build(b: *std.Build) void {
         "Stall when creating a plugin from the factory until a debugger mutates wait variable",
     ) orelse false;
 
-    const gui_supported = b.option(
-        bool,
-        "gui",
-        "Build ZSynth with a GUI for parameter management",
-    ) orelse false;
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const clap_bindings = b.dependency("clap-bindings", .{});
@@ -59,7 +53,6 @@ pub fn build(b: *std.Build) void {
     var options = Step.Options.create(b);
     options.addOption(bool, "generate_wavetables_comptime", generate_wavetables_comptime);
     options.addOption(bool, "wait_for_debugger", wait_for_debugger);
-    options.addOption(bool, "gui_supported", gui_supported);
 
     // Something about this is very wrong...
     const font_data = @embedFile("assets/Roboto-Medium.ttf");
@@ -80,6 +73,13 @@ pub fn build(b: *std.Build) void {
 
         pkg.root_module.addOptions("options", options);
         pkg.root_module.addOptions("static_data", static_data);
+
+        pkg.addCSourceFiles(.{
+            .files = &.{
+                "src/ext/gui/cocoa_helper.m",
+            },
+            .flags = &.{},
+        });
     }
 
     // Specific steps for different targets
