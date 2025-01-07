@@ -15,7 +15,7 @@ inline fn sampleRateSupported(sample_rate: f64) bool {
 pub const sample_count = 256;
 const waveshape_count = std.meta.fields(Wave).len;
 
-const half_steps_per_table = 4;
+const half_steps_per_table = 2.0;
 const table_count = 128 / half_steps_per_table;
 comptime {
     if (@mod(table_count, 1.0) != 0.0) {
@@ -24,7 +24,7 @@ comptime {
 }
 pub const WaveTable = [waveshape_count][table_count][sample_count]f64;
 
-pub inline fn generate_wave_table() WaveTable {
+pub inline fn generateWaveTable() WaveTable {
     @setEvalBranchQuota(std.math.maxInt(u32));
     var table: WaveTable = undefined;
     const sample_rate = 48000;
@@ -39,7 +39,7 @@ pub inline fn generate_wave_table() WaveTable {
         for (0..table_count) |table_index| {
             var sample_data = &table_data[table_index];
             // TODO: Ensure the key at the upper bound of this doesn't produce harmonics that exceed the nyquist
-            const key: f64 = @floatFromInt(table_index * half_steps_per_table);
+            const key: f64 = @as(f64, @floatFromInt(table_index)) * half_steps_per_table;
             const frequency = getFrequency(key);
             for (0..sample_count) |sample_index| {
                 const phase: f64 = @as(f64, @floatFromInt(sample_index)) / @as(f64, @floatFromInt(sample_count));
@@ -65,6 +65,37 @@ pub inline fn getFrequency(key: f64) f64 {
     return 440.0 * std.math.exp2((key - 57.0) / 12.0);
 }
 
+// Helper function to get sample with wraparound
+inline fn getSample(sample_data: []const f64, index: usize) f64 {
+    return sample_data[@mod(index, sample_count)];
+}
+
+// Cubic interpolation using Catmull-Rom spline
+inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
+    var index: usize = @intFromFloat(@floor(index_f));
+    const frac = index_f - @floor(index_f);
+
+    // Get four adjacent points
+    if (index == 0) {
+        index = sample_count;
+    }
+    const y0 = getSample(sample_data, index - 1);
+    const y1 = getSample(sample_data, index);
+    const y2 = getSample(sample_data, index + 1);
+    const y3 = getSample(sample_data, index + 2);
+
+    // Compute polynomial coefficients
+    const frac2 = frac * frac;
+    const frac3 = frac2 * frac;
+
+    const a = (-0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3);
+    const b = (y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3);
+    const c = (-0.5 * y0 + 0.5 * y2);
+    const d = y1;
+
+    return a * frac3 + b * frac2 + c * frac + d;
+}
+
 pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: f64, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
@@ -73,7 +104,7 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
 
     const frequency = getFrequency(key);
 
-    const table_index: usize = @intFromFloat(key / @as(f64, @floatFromInt(half_steps_per_table)));
+    const table_index: usize = @intFromFloat(key / half_steps_per_table);
     const waveshape_index: usize = @intFromEnum(wave_type) - 1;
     const sample_data = &wave_table[waveshape_index][table_index];
 
@@ -81,7 +112,7 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
 
     const period_length: f64 = @floatFromInt(sample_count);
     const index_f: f64 = @mod(period_length * phase, period_length); // Mod it just incase phase was exactly 1.00
-    const index_l: usize = @intFromFloat(index_f);
+    const index_l: usize = @intFromFloat(std.math.floor(index_f));
     const index_r: usize = @mod(@as(usize, @intFromFloat(std.math.ceil(index_f))), sample_count);
 
     // If our index was an integer value to begin with, no need to interpolate
@@ -89,98 +120,116 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
         return sample_data[index_l];
     }
 
-    // Otherwise linear interpolate between the two closest integer indices to the non-integer index
-    const weight: f64 = index_f - std.math.floor(index_f);
-    return (sample_data[index_r] * weight) + (sample_data[index_l] * (1.0 - weight));
+    // Otherwise use cubic interpolation
+    return cubicInterpolate(&sample_data.*, index_f);
 }
 
 pub inline fn generate(wave_type: Wave, sample_rate: f64, frequency: f64, phase: f64) f64 {
     switch (wave_type) {
         Wave.Sine => {
-            return generate_sine(sample_rate, frequency, phase);
+            return generateSine(sample_rate, frequency, phase);
         },
         Wave.Saw => {
-            return generate_saw(sample_rate, frequency, phase);
+            return generateSaw(sample_rate, frequency, phase);
         },
         Wave.Triangle => {
-            return generate_triangle(sample_rate, frequency, phase);
+            return generateTriangle(sample_rate, frequency, phase);
         },
         Wave.Square => {
-            return generate_square(sample_rate, frequency, phase);
+            return generateSquare(sample_rate, frequency, phase);
         },
     }
 }
 
-pub inline fn generate_naive(wave_type: Wave, phase: f64) f64 {
+pub inline fn generateNaive(wave_type: Wave, phase: f64) f64 {
     switch (wave_type) {
         Wave.Sine => {
-            return naive_sine(phase);
+            return naiveSine(phase);
         },
         Wave.Saw => {
-            return naive_saw(phase);
+            return naiveSaw(phase);
         },
         Wave.Triangle => {
-            return naive_triangle(phase);
+            return naiveTriangle(phase);
         },
         Wave.Square => {
-            return naive_square(phase);
+            return naiveSquare(phase);
         },
     }
 }
 
-pub inline fn naive_sine(phase: f64) f64 {
+pub inline fn naiveSine(phase: f64) f64 {
     return std.math.sin(phase * 2.0 * std.math.pi);
 }
 
-pub inline fn naive_saw(phase: f64) f64 {
+pub inline fn naiveSaw(phase: f64) f64 {
     return 2.0 * (phase - std.math.floor(phase + 0.5));
 }
 
-pub inline fn naive_square(phase: f64) f64 {
+pub inline fn naiveSquare(phase: f64) f64 {
     return if (phase > 0.5) -1 else 1;
 }
 
-pub inline fn naive_triangle(phase: f64) f64 {
+pub inline fn naiveTriangle(phase: f64) f64 {
     return 4 * @abs(@mod(phase - 0.25, 1.0) - 0.5) - 1;
 }
 
-pub inline fn generate_sine(_: f64, _: f64, phase: f64) f64 {
-    // Sine just uses naive all the time
-    return naive_sine(phase);
+inline fn smoothRolloff(f: f64) f64 {
+    return std.math.cos(f * std.math.pi * 0.5);
 }
 
-pub inline fn generate_saw(sample_rate: f64, frequency: f64, phase: f64) f64 {
+pub inline fn generateSine(_: f64, _: f64, phase: f64) f64 {
+    // Sine just uses naive all the time
+    return naiveSine(phase);
+}
+
+pub inline fn generateSaw(sample_rate: f64, frequency: f64, phase: f64) f64 {
     const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     while (n * frequency < nyquist) : (n += 1) {
-        wave += ((std.math.pow(f64, -1, n)) / n) * std.math.sin(phase * n * 2.0 * std.math.pi);
+        // Apply a smooth rolloff as we approach Nyquist
+        const nyquist_ratio = (n * frequency) / nyquist;
+        const window = smoothRolloff(nyquist_ratio);
+
+        wave += ((std.math.pow(f64, -1, n)) / n) *
+            std.math.sin(phase * n * 2.0 * std.math.pi) *
+            window;
     }
     return wave * (-2.0 / std.math.pi);
 }
 
-pub inline fn generate_square(sample_rate: f64, frequency: f64, phase: f64) f64 {
+pub inline fn generateSquare(sample_rate: f64, frequency: f64, phase: f64) f64 {
     const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     var k = (2 * n) - 1;
     while (k * frequency < nyquist) : (n += 1) {
         k = (2 * n) - 1;
-        wave += (1 / k) * std.math.sin(phase * k * 2.0 * std.math.pi);
+        // Apply a smooth rolloff as we approach Nyquist
+        const nyquist_ratio = (n * frequency) / nyquist;
+        const window = smoothRolloff(nyquist_ratio);
+
+        wave += (1 / k) * std.math.sin(phase * k * 2.0 * std.math.pi) * window;
     }
     // TODO: Resolve the Gibbs phenomenon issues more gracefully than this
     // return wave * (4.0 / std.math.pi);
     return wave;
 }
 
-pub inline fn generate_triangle(sample_rate: f64, frequency: f64, phase: f64) f64 {
+pub inline fn generateTriangle(sample_rate: f64, frequency: f64, phase: f64) f64 {
     const nyquist = sample_rate / 2;
     var wave: f64 = 0;
     var n: f64 = 1;
     var k = (2 * n) - 1;
     while (k * frequency < nyquist) : (n += 1) {
         k = (2 * n) - 1;
-        wave += ((std.math.pow(f64, -1, n)) / (k * k)) * std.math.sin(phase * k * 2.0 * std.math.pi);
+
+        // Apply a smooth rolloff as we approach Nyquist
+        const nyquist_ratio = (n * frequency) / nyquist;
+        const window = smoothRolloff(nyquist_ratio);
+
+        wave += ((std.math.pow(f64, -1, n)) / (k * k)) * std.math.sin(phase * k * 2.0 * std.math.pi) * window;
     }
     return wave * (-8.0 / (std.math.pi * std.math.pi));
 }
@@ -188,7 +237,7 @@ pub inline fn generate_triangle(sample_rate: f64, frequency: f64, phase: f64) f6
 pub const NaiveWaveFunction = *const fn (phase: f64) callconv(.@"inline") f64;
 pub const WaveFunction = *const fn (sample_rate: f64, frequency: f64, phase: f64) callconv(.@"inline") f64;
 
-fn test_wave_functions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFunction) !void {
+fn testWaveFunctions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFunction) !void {
     const epsilon: f64 = 0.1; // Within 10% accuracy from the real thing
     const sample_rate: f64 = 48000;
 
@@ -221,13 +270,13 @@ fn test_wave_functions(ideal_wave: NaiveWaveFunction, generated_wave: WaveFuncti
 }
 
 test "Saw function accuracy" {
-    try test_wave_functions(naive_saw, generate_saw);
+    try testWaveFunctions(naiveSaw, generateSaw);
 }
 
 test "Square function accuracy" {
-    try test_wave_functions(naive_square, generate_square);
+    try testWaveFunctions(naiveSquare, generateSquare);
 }
 
 test "Triangle function accuracy" {
-    try test_wave_functions(naive_triangle, generate_triangle);
+    try testWaveFunctions(naiveTriangle, generateTriangle);
 }

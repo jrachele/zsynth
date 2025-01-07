@@ -60,9 +60,9 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
 
     // Stack objects
     const wave_table = if (options.generate_wavetables_comptime)
-        comptime waves.generate_wave_table()
+        comptime waves.generateWaveTable()
     else
-        waves.generate_wave_table();
+        waves.generateWaveTable();
 
     plugin.* = .{
         .allocator = allocator,
@@ -109,7 +109,7 @@ pub fn notifyHostVoicesChanged(self: *Plugin) bool {
     defer self.job_mutex.unlock();
 
     if (self.jobs.notify_host_voices_changed) {
-        std.log.warn("Host is already queued for notify voice changed, discarding request", .{});
+        std.log.debug("Host is already queued for notify voice changed, discarding request", .{});
         return false;
     }
 
@@ -123,7 +123,7 @@ pub fn notifyHostParamsChanged(self: *Plugin) bool {
     defer self.job_mutex.unlock();
 
     if (self.jobs.notify_host_params_changed) {
-        std.log.warn("Host is already queued for notify params changed, discarding request", .{});
+        std.log.debug("Host is already queued for notify params changed, discarding request", .{});
         return false;
     }
 

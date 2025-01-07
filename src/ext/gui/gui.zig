@@ -74,6 +74,7 @@ fn createWindow(self: *GUI) !void {
 
     // Initialize GLFW
     try glfw.init();
+    errdefer glfw.terminate();
 
     glfw.windowHintTyped(.context_version_major, gl_major);
     glfw.windowHintTyped(.context_version_minor, gl_minor);
@@ -168,7 +169,7 @@ fn draw(self: *GUI) bool {
 
     const gl = zopengl.bindings;
 
-    glfw.pollEvents();
+    glfw.waitEvents();
 
     gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
 
