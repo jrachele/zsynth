@@ -13,7 +13,11 @@ const zopengl = @import("zopengl");
 const Plugin = @import("../../plugin.zig");
 const Params = @import("../params.zig");
 
-// TODO: Figure out a nice way to import depending on target
+const platform_gui = switch (builtin.os.tag) {
+    .macos => @import("cocoa.zig"),
+    _ => .{},
+};
+
 const cocoa = @import("cocoa.zig");
 
 const waves = @import("../../audio/waves.zig");
@@ -24,7 +28,7 @@ allocator: std.mem.Allocator,
 
 window: ?*glfw.Window,
 is_floating: bool,
-cocoa_data: ?*anyopaque,
+daw_window: ?*const clap.ext.gui.Window,
 
 const gl_major = 4;
 const gl_minor = 0;
@@ -38,13 +42,13 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*
     }
 
     const gui = try allocator.create(GUI);
+    errdefer allocator.destroy(gui);
     gui.* = .{
         .plugin = plugin,
         .allocator = allocator,
         .is_floating = is_floating,
         .window = null,
-        // TODO: Make this generic and depend on the target
-        .cocoa_data = null,
+        .daw_window = null,
     };
 
     try gui.createWindow();
@@ -70,6 +74,7 @@ fn createWindow(self: *GUI) !void {
 
     // Initialize ImGui
     zgui.init(self.plugin.allocator);
+    errdefer zgui.deinit();
     zgui.io.setIniFilename(null);
 
     // Initialize GLFW
@@ -103,10 +108,12 @@ fn createWindow(self: *GUI) !void {
     zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
 
-    // Hiding the dock by setting the activation policy to accessory prevents a strange focus loss bug
-    // https://github.com/glfw/glfw/issues/1766
-    // https://old.reddit.com/r/MacOS/comments/1fmmqj7/severe_focus_loss_bug_still_not_fixed_in_macos/
-    cocoa.hideDock();
+    if (builtin.os.tag == .macos) {
+        // Hiding the dock by setting the activation policy to accessory prevents a strange focus loss bug
+        // https://github.com/glfw/glfw/issues/1766
+        // https://old.reddit.com/r/MacOS/comments/1fmmqj7/severe_focus_loss_bug_still_not_fixed_in_macos/
+        platform_gui.hideDock();
+    }
 
     self.window = window;
 }
@@ -389,11 +396,18 @@ fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
 fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gui.Window) callconv(.C) bool {
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui) |gui| {
+        gui.daw_window = plugin_window;
         if (gui.window) |window| {
-            if (glfw.getCocoaWindow(window)) |cocoa_window| {
-                cocoa.setParent(cocoa_window, plugin_window.data.cocoa);
-                gui.cocoa_data = plugin_window.data.cocoa;
-                return true;
+            switch (builtin.os.tag) {
+                .macos => {
+                    if (glfw.getCocoaWindow(window)) |cocoa_window| {
+                        platform_gui.setParent(cocoa_window, plugin_window.data.cocoa);
+                        return true;
+                    }
+                },
+                else => {
+                    return false;
+                },
             }
         }
     }
@@ -404,7 +418,7 @@ fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gu
 fn _setTransient(clap_plugin: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui) |gui| {
-        gui.cocoa_data = window.data.cocoa;
+        gui.daw_window = window;
     }
     return true;
 }

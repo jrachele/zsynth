@@ -28,6 +28,8 @@ pub fn build(b: *std.Build) void {
     });
     const zglfw = b.dependency("zglfw", .{
         .shared = false,
+        .x11 = false,
+        .wayland = true,
     });
     const zopengl = b.dependency("zopengl", .{});
 
@@ -74,12 +76,14 @@ pub fn build(b: *std.Build) void {
         pkg.root_module.addOptions("options", options);
         pkg.root_module.addOptions("static_data", static_data);
 
-        pkg.addCSourceFiles(.{
-            .files = &.{
-                "src/ext/gui/cocoa_helper.m",
-            },
-            .flags = &.{},
-        });
+        if (builtin.os.tag == .macos) {
+            pkg.addCSourceFiles(.{
+                .files = &.{
+                    "src/ext/gui/cocoa_helper.m",
+                },
+                .flags = &.{},
+            });
+        }
     }
 
     // Specific steps for different targets
