@@ -83,6 +83,7 @@ fn createWindow(self: *GUI) !void {
     glfw.windowHintTyped(.client_api, .opengl_api);
     glfw.windowHintTyped(.doublebuffer, true);
     glfw.windowHintTyped(.visible, self.is_floating);
+
     const window_title = "ZSynth";
     const window = try glfw.Window.create(800, 500, window_title, null);
     errdefer window.destroy();
@@ -102,6 +103,11 @@ fn createWindow(self: *GUI) !void {
     zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
 
+    // Hiding the dock by setting the activation policy to accessory prevents a strange focus loss bug
+    // https://github.com/glfw/glfw/issues/1766
+    // https://old.reddit.com/r/MacOS/comments/1fmmqj7/severe_focus_loss_bug_still_not_fixed_in_macos/
+    cocoa.hideDock();
+
     self.window = window;
 }
 
@@ -113,7 +119,7 @@ fn destroyWindow(self: *GUI) void {
         zgui.backend.deinit();
         zgui.deinit();
         window.destroy();
-        glfw.terminate();
+        // glfw.terminate();
         windowWasDestroyed = true;
     }
     self.window = null;
@@ -132,18 +138,12 @@ pub fn show(self: *GUI) !void {
 
     if (self.window) |window| {
         window.setAttribute(.visible, true);
-        if (self.cocoa_data) |cocoa_data| {
-            cocoa.setVisibility(cocoa_data, true);
-        }
     }
 }
 
 pub fn hide(self: *GUI) void {
     if (self.window) |window| {
         window.setAttribute(.visible, false);
-        if (self.cocoa_data) |cocoa_data| {
-            cocoa.setVisibility(cocoa_data, false);
-        }
     }
 }
 
@@ -169,7 +169,7 @@ fn draw(self: *GUI) bool {
 
     const gl = zopengl.bindings;
 
-    glfw.waitEvents();
+    glfw.pollEvents();
 
     gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
 
@@ -304,6 +304,7 @@ fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, _: bool) callconv(.C
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
 /// not copied.
 fn _getPreferredApi(_: *const clap.Plugin, _: *[*:0]const u8, is_floating: *bool) callconv(.C) bool {
+    // _ = is_floating;
     is_floating.* = true;
     return true;
 }
@@ -400,9 +401,12 @@ fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gu
     return false;
 }
 /// sets the plugin window to stay above the given window. returns true on success.
-fn _setTransient(_: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
-    _ = window;
-    return false;
+fn _setTransient(clap_plugin: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        gui.cocoa_data = window.data.cocoa;
+    }
+    return true;
 }
 /// suggests a window title. only for floating windows.
 fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {

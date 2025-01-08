@@ -10,12 +10,6 @@ void cocoaSetParent(void *_glfwWindow, void *_pluginView) {
 //     [pluginWindow addChildWindow:glfwWindow ordered:NSWindowBelow];
 }
 
-void cocoaSetVisibility(void *_pluginView, bool visibility) {
-// 	NSView *pluginView = (NSView *) _pluginView;
-
-// 	if (visibility) {
-//         [pluginView setHidden:NO];
-// 	} else {
-//         [pluginView setHidden:YES];
-// 	}
+void cocoaHideDock() {
+    NSApp.activationPolicy = NSApplicationActivationPolicyAccessory;
 }
