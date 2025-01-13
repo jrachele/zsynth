@@ -13,28 +13,42 @@
   };
 
   outputs = { self, nixpkgs, zig-overlay, flake-utils, zls }:
-  flake-utils.lib.eachDefaultSystem (system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          zig = zig-overlay.packages.${system}.master;
-          # zls = zls.packages.${system}.default;
-        in
-              rec {
-                formatter = pkgs.nixpkgs-fmt;
-                packages.default = pkgs.stdenv.mkDerivation {
-                  name = "zsynth";
-                  src = ./.;
-                  nativeBuildInputs = [ zig ];
-                  buildPhase = ''
-                    zig build
-                  '';
-                };
-                devShells.default = pkgs.mkShell {
-                    buildInputs = [
-                    zig
-                    zls.packages.${system}.zls
-                    ];
-                };
-               }
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        zig = zig-overlay.packages.${system}.master;
+        # zls = zls.packages.${system}.default;
+      in
+      rec {
+        formatter = pkgs.nixpkgs-fmt;
+        packages.default = pkgs.stdenv.mkDerivation {
+          name = "zsynth";
+          src = ./.;
+          nativeBuildInputs = [ zig ];
+          buildInputs = with pkgs; [ wayland ];
+          buildPhase = ''
+            zig build
+          '';
+        };
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = with pkgs;[
+            zig
+            zls.packages.${system}.zls
+            #glfw-wayland
+            #glfw
+            #wayland-protocols
+            #xorg.libX11
+            #xorg.libXcursor
+            #xorg.libXi
+            #xorg.libXinerama
+            #xorg.libXrandr
+            #xorg.libXxf86vm
+          ];
+          buildInputs = with pkgs; [
+            wayland
+            glfw-wayland
+          ];
+        };
+      }
     );
 }

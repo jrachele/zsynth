@@ -81,13 +81,13 @@ fn createWindow(self: *GUI) !void {
     try glfw.init();
     errdefer glfw.terminate();
 
-    glfw.windowHintTyped(.context_version_major, gl_major);
-    glfw.windowHintTyped(.context_version_minor, gl_minor);
-    glfw.windowHintTyped(.opengl_profile, .opengl_core_profile);
-    glfw.windowHintTyped(.opengl_forward_compat, true);
-    glfw.windowHintTyped(.client_api, .opengl_api);
-    glfw.windowHintTyped(.doublebuffer, true);
-    glfw.windowHintTyped(.visible, self.is_floating);
+    glfw.windowHint(.context_version_major, gl_major);
+    glfw.windowHint(.context_version_minor, gl_minor);
+    glfw.windowHint(.opengl_profile, .opengl_core_profile);
+    glfw.windowHint(.opengl_forward_compat, true);
+    glfw.windowHint(.client_api, .opengl_api);
+    glfw.windowHint(.doublebuffer, true);
+    glfw.windowHint(.visible, self.is_floating);
 
     const window_title = "ZSynth";
     const window = try glfw.Window.create(800, 500, window_title, null);
@@ -170,7 +170,8 @@ fn draw(self: *GUI) bool {
 
     var window = self.window.?;
     if (window.getKey(.escape) == .press) {
-        window.setShouldClose(true);
+        glfw.setWindowShouldClose(window, true);
+        // window.setShouldClose(true);
         return false;
     }
 

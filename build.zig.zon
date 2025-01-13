@@ -39,11 +39,16 @@
             .url = "https://github.com/zig-gamedev/zopengl/archive/c9c293a9af388478bca0ad52007a72372ef71747.tar.gz",
             .hash = "1220c030f5e33e09bd80fe7a7b064b65e1fc02e9bbf603ba04716866c9f1ca16f8ce",
         },
+        // TODO: Undo this comment
+        // .zglfw = .{
+        //     .url = "https://github.com/zig-gamedev/zglfw/archive/4a5ec6186173a6ae4d71ad01b64dac5561ef0b16.tar.gz",
+        //     .hash = "1220fb278bcd5f1be0096c841c29de2374806f3980160aa3e409f551b1c242254b74",
+        // },
         .zglfw = .{
-            .url = "https://github.com/zig-gamedev/zglfw/archive/4a5ec6186173a6ae4d71ad01b64dac5561ef0b16.tar.gz",
-            .hash = "1220fb278bcd5f1be0096c841c29de2374806f3980160aa3e409f551b1c242254b74",
-        },
+            .path = "zglfw/"
+        }
     },
+
     .paths = .{
         "build.zig",
         "build.zig.zon",

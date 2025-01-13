@@ -22,10 +22,8 @@ const ClapEntry = struct {
     }
 
     fn _init(plugin_path: [*:0]const u8) callconv(.c) bool {
-        if (builtin.mode == .Debug) {
-            var wait: bool = options.wait_for_debugger;
-            const debuggerMutate: *volatile bool = &wait;
-            while (debuggerMutate.*) {}
+        if (builtin.mode == .Debug and options.wait_for_debugger) {
+            @breakpoint();
         }
 
         gpa = .{};
