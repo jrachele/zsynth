@@ -55,7 +55,7 @@ pub fn processVoice(self: *Voices, voice_index: u32) !void {
 
     const voice: *Voice = self.getVoice(@intCast(voice_index)).?;
 
-    const wave_value: u32 = @intFromFloat(self.plugin.params.values.get(.WaveShape));
+    const wave_value: u32 = @intFromEnum(self.plugin.params.values.get(.WaveShape).Wave);
     const wave_type: Wave = try std.meta.intToEnum(Wave, wave_value);
 
     var render_payload = self.render_payload.?;
@@ -86,7 +86,7 @@ pub fn processVoice(self: *Voices, voice_index: u32) !void {
         var output_l: f32 = @floatCast(voice_sum_l);
         var output_r: f32 = @floatCast(voice_sum_r);
 
-        if (plugin.params.get(.ScaleVoices) == 1.0) {
+        if (plugin.params.get(.ScaleVoices).Bool) {
             // Apply scaling to prevent the amplitude to go too crazy
             const scaling = 1.0 / @max(1, std.math.sqrt(@as(f32, @floatFromInt(self.getVoiceCount()))));
             output_l *= scaling;

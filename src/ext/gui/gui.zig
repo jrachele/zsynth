@@ -218,7 +218,7 @@ fn draw(self: *GUI) bool {
 
                 switch (param_type) {
                     .Attack, .Release, .Decay, .Sustain => {
-                        var val: f32 = @floatCast(self.plugin.params.get(param_type));
+                        var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
                         if (zgui.sliderFloat(
                             value_text,
                             .{
@@ -227,19 +227,18 @@ fn draw(self: *GUI) bool {
                                 .max = @floatCast(info.max_value),
                             },
                         )) {
-                            self.plugin.params.set(param_type, @as(f64, @floatCast(val)), .{
+                            self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatCast(val)) }, .{
                                 .should_notify_host = true,
                             }) catch return false;
                         }
                     },
                     .ScaleVoices, .DebugBool1, .DebugBool2 => {
                         if (builtin.mode == .Debug) {
-                            var val: bool = self.plugin.params.get(param_type) == 1.0;
+                            var val: bool = self.plugin.params.get(param_type).Bool;
                             if (zgui.checkbox(value_text, .{
                                 .v = &val,
                             })) {
-                                const f: f64 = if (val) 1.0 else 0.0;
-                                self.plugin.params.set(param_type, f, .{
+                                self.plugin.params.set(param_type, .{ .Bool = val }, .{
                                     .should_notify_host = true,
                                 }) catch return false;
                             }
@@ -248,10 +247,11 @@ fn draw(self: *GUI) bool {
                     .WaveShape => {
                         // TODO replace these with iconic buttons
                         inline for (std.meta.fields(Wave)) |field| {
+                            const wave: Wave = @enumFromInt(field.value);
                             if (zgui.radioButton(field.name, .{
-                                .active = self.plugin.params.get(.WaveShape) == field.value,
+                                .active = self.plugin.params.get(.WaveShape).Wave == wave,
                             })) {
-                                self.plugin.params.set(.WaveShape, field.value, .{
+                                self.plugin.params.set(.WaveShape, .{ .Wave = wave }, .{
                                     .should_notify_host = true,
                                 }) catch return false;
                             }

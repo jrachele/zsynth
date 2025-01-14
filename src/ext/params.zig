@@ -11,16 +11,14 @@ const Wave = @import("../audio/waves.zig").Wave;
 const Info = clap.ext.params.Info;
 
 pub const Parameter = enum {
-    // Floats
+    // ADSR
     Attack,
     Decay,
     Sustain,
     Release,
 
-    // Enums
+    // Oscillator
     WaveShape,
-
-    // Bools
     ScaleVoices,
 
     // Debug params
@@ -28,25 +26,49 @@ pub const Parameter = enum {
     DebugBool2,
 };
 
-pub const ParamValues = std.EnumArray(Parameter, f64);
+pub const ParameterValue = union(enum) {
+    Float: f64,
+    Wave: Wave,
+    Bool: bool,
 
-pub const param_defaults = std.enums.EnumFieldStruct(Parameter, f64, null){
-    .Attack = 5.0,
-    .Decay = 5.0,
-    .Sustain = 0.5,
-    .Release = 200.0,
+    pub fn asFloat(parameterValue: ParameterValue) f64 {
+        switch (parameterValue) {
+            .Float => {
+                return parameterValue.Float;
+            },
+            .Wave => {
+                return @floatFromInt(@intFromEnum(parameterValue.Wave));
+            },
+            .Bool => {
+                if (parameterValue.Bool) {
+                    return 1.0;
+                } else {
+                    return 0.0;
+                }
+            },
+        }
+    }
+};
 
-    .WaveShape = @intFromEnum(Wave.Sine),
+pub const ParameterArray = std.EnumArray(Parameter, ParameterValue);
 
-    .ScaleVoices = 0.0,
+pub const param_defaults = std.enums.EnumFieldStruct(Parameter, ParameterValue, null){
+    .Attack = .{ .Float = 5.0 },
+    .Decay = .{ .Float = 5.0 },
+    .Sustain = .{ .Float = 0.5 },
+    .Release = .{ .Float = 200.0 },
 
-    .DebugBool1 = 0.0,
-    .DebugBool2 = 0.0,
+    .WaveShape = .{ .Wave = Wave.Sine },
+
+    .ScaleVoices = .{ .Bool = false },
+
+    .DebugBool1 = .{ .Bool = false },
+    .DebugBool2 = .{ .Bool = false },
 };
 
 pub const param_count = std.meta.fields(Parameter).len;
 
-values: ParamValues = ParamValues.init(param_defaults),
+values: ParameterArray = .init(param_defaults),
 mutex: std.Thread.Mutex,
 events: std.ArrayList(clap.events.ParamValue),
 
@@ -63,7 +85,7 @@ pub fn deinit(self: *Params) void {
 }
 
 /// Thread-safe getter for parameter values
-pub fn get(self: *Params, param: Parameter) f64 {
+pub fn get(self: *Params, param: Parameter) ParameterValue {
     self.mutex.lock();
     defer self.mutex.unlock();
     return self.values.get(param);
@@ -74,7 +96,7 @@ const ParamSetFlags = struct {
     should_notify_host: bool = false,
 };
 
-pub fn set(self: *Params, param: Parameter, val: f64, flags: ParamSetFlags) !void {
+pub fn set(self: *Params, param: Parameter, val: ParameterValue, flags: ParamSetFlags) !void {
     self.mutex.lock();
     defer self.mutex.unlock();
     self.values.set(param, val);
@@ -95,14 +117,14 @@ pub fn set(self: *Params, param: Parameter, val: f64, flags: ParamSetFlags) !voi
             .key = .unspecified,
             .port_index = .unspecified,
             .param_id = @enumFromInt(param_index),
-            .value = val,
+            .value = val.asFloat(),
             .cookie = null,
         };
 
         try self.events.append(event);
     }
 
-    std.log.debug("Changed param value of {} to {d}", .{ param, val });
+    std.log.debug("Changed param value of {} to {}", .{ param, val });
 }
 
 pub inline fn create() clap.ext.params.Plugin {
@@ -130,16 +152,16 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.Attack => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.Attack,
+                .default_value = param_defaults.Attack.Float,
                 .min_value = 0,
                 .max_value = 20000,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.Attack)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Attack");
             std.mem.copyForwards(u8, &info.module, "Envelope/Attack");
@@ -147,16 +169,16 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.Decay => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.Decay,
+                .default_value = param_defaults.Decay.Float,
                 .min_value = 0,
                 .max_value = 20000,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.Decay)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Decay");
             std.mem.copyForwards(u8, &info.module, "Envelope/Decay");
@@ -164,10 +186,10 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.Sustain => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.Sustain,
+                .default_value = param_defaults.Sustain.Float,
                 .min_value = 0.0,
                 .max_value = 1.0,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_automatable = true,
                 },
@@ -180,17 +202,17 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.Release => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.Release,
+                .default_value = param_defaults.Release.Float,
                 .min_value = 0,
                 .max_value = 20000,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
 
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.Release)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Release");
             std.mem.copyForwards(u8, &info.module, "Envelope/Release");
@@ -198,17 +220,17 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.WaveShape => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.WaveShape,
+                .default_value = param_defaults.WaveShape.asFloat(),
                 .min_value = @intFromEnum(Wave.Sine),
                 .max_value = std.meta.fields(Wave).len,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
                     .is_enum = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.WaveShape)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Wave");
             std.mem.copyForwards(u8, &info.module, "Oscillator/Wave");
@@ -216,16 +238,16 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.ScaleVoices => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.ScaleVoices,
+                .default_value = param_defaults.ScaleVoices.asFloat(),
                 .min_value = 0,
                 .max_value = 1,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = true,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.ScaleVoices)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "ScaleVoices");
             std.mem.copyForwards(u8, &info.module, "Oscillator/ScaleVoices");
@@ -234,17 +256,17 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.DebugBool1 => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.DebugBool1,
+                .default_value = param_defaults.DebugBool1.asFloat(),
                 .min_value = 0,
                 .max_value = 1,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = builtin.mode == .Debug,
                     .is_hidden = builtin.mode != .Debug,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool1)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Use Thread Pool");
             std.mem.copyForwards(u8, &info.module, "Debug/Bool1");
@@ -252,17 +274,17 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
         Parameter.DebugBool2 => {
             info.* = .{
                 .cookie = null,
-                .default_value = param_defaults.DebugBool2,
+                .default_value = param_defaults.DebugBool2.asFloat(),
                 .min_value = 0,
                 .max_value = 1,
-                .name = undefined,
+                .name = [_]u8{0} ** 256,
                 .flags = .{
                     .is_stepped = true,
                     .is_automatable = builtin.mode == .Debug,
                     .is_hidden = builtin.mode != .Debug,
                 },
                 .id = @enumFromInt(@intFromEnum(Parameter.DebugBool2)),
-                .module = undefined,
+                .module = [_]u8{0} ** 1024,
             };
             std.mem.copyForwards(u8, &info.name, "Bool2");
             std.mem.copyForwards(u8, &info.module, "Debug/Bool2");
@@ -279,7 +301,7 @@ fn _getValue(clap_plugin: *const clap.Plugin, id: clap.Id, out_value: *f64) call
         return false;
     }
 
-    out_value.* = plugin.params.get(@enumFromInt(index));
+    out_value.* = plugin.params.get(@enumFromInt(index)).asFloat();
     return true;
 }
 
@@ -426,7 +448,16 @@ fn processEvent(plugin: *Plugin, event: *const clap.events.Header) bool {
             return false;
         }
 
-        plugin.params.set(@enumFromInt(index), param_event.value, .{}) catch unreachable;
+        const param: Parameter = @enumFromInt(index);
+        const value: ParameterValue = switch (param) {
+            // There is perhaps a better way of doing this, but I don't know what that is.
+            .Attack, .Decay, .Release, .Sustain => .{ .Float = param_event.value },
+            // Cast the float as an int first, then cast as an enum
+            .WaveShape => .{ .Wave = @as(Wave, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
+            .ScaleVoices, .DebugBool1, .DebugBool2 => .{ .Bool = if (param_event.value == 1.0) true else false },
+        };
+
+        plugin.params.set(param, value, .{}) catch unreachable;
         return true;
     }
     return false;
@@ -464,10 +495,10 @@ pub fn _flush(
     if (params_did_change) {
         std.log.debug("Parameters changed, updating voices and notifying host", .{});
         for (plugin.voices.voices.items) |*voice| {
-            voice.adsr.attack_time = plugin.params.get(Parameter.Attack);
-            voice.adsr.decay_time = plugin.params.get(Parameter.Decay);
-            voice.adsr.release_time = plugin.params.get(Parameter.Release);
-            voice.adsr.original_sustain_value = plugin.params.get(Parameter.Sustain);
+            voice.adsr.attack_time = plugin.params.get(Parameter.Attack).Float;
+            voice.adsr.decay_time = plugin.params.get(Parameter.Decay).Float;
+            voice.adsr.release_time = plugin.params.get(Parameter.Release).Float;
+            voice.adsr.original_sustain_value = plugin.params.get(Parameter.Sustain).Float;
         }
         _ = plugin.notifyHostParamsChanged();
     }

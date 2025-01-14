@@ -1,3 +1,4 @@
+.direnv/
 .git/
 .idea/
 .zig-cache/
@@ -5,4 +6,3 @@ zig-out/
 .DS_Store
 Folder.DotSettings.user
 .vscode/
-waves/

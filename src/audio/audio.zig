@@ -45,10 +45,10 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
             }
 
             const adsr = ADSR.init(
-                plugin.params.get(Parameter.Attack),
-                plugin.params.get(Parameter.Decay),
-                plugin.params.get(Parameter.Sustain),
-                plugin.params.get(Parameter.Release),
+                plugin.params.get(Parameter.Attack).Float,
+                plugin.params.get(Parameter.Decay).Float,
+                plugin.params.get(Parameter.Sustain).Float,
+                plugin.params.get(Parameter.Release).Float,
             );
 
             var new_voice = Voice{};
@@ -120,7 +120,7 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
     };
 
     var did_render_audio = false;
-    const should_use_threadpool = builtin.mode != .Debug or plugin.params.get(Parameter.DebugBool1) == 1.0;
+    const should_use_threadpool = builtin.mode != .Debug or plugin.params.get(Parameter.DebugBool1).Bool == true;
     if (should_use_threadpool) {
         if (plugin.host.getExtension(plugin.host, clap.ext.thread_pool.id)) |ext_raw| {
             const thread_pool: *const clap.ext.thread_pool.Host = @ptrCast(@alignCast(ext_raw));

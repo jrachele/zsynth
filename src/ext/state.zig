@@ -87,8 +87,8 @@ fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(
     return false;
 }
 // Load the JSON state from a complete buffer.
-fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.ParamValues {
-    const params_data = std.json.parseFromSlice([]f64, allocator, buffer, .{
+fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.ParameterArray {
+    const params_data = std.json.parseFromSlice([]Params.ParameterValue, allocator, buffer, .{
         .ignore_unknown_fields = true,
     }) catch |err| {
         std.log.err("Error loading parameters: {}", .{err});
@@ -96,7 +96,7 @@ fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.Pa
     };
     defer params_data.deinit();
 
-    var params = Params.ParamValues.init(Params.param_defaults);
+    var params = Params.ParameterArray.init(Params.param_defaults);
     if (Params.param_count != params_data.value.len) {
         std.log.warn("Parameter count {d} does not match length of previously saved parameter data {d}", .{ Params.param_count, params_data.value.len });
     }
