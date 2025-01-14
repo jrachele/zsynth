@@ -28,8 +28,8 @@ pub fn build(b: *std.Build) void {
     });
     const zglfw = b.dependency("zglfw", .{
         .shared = false,
-        .x11 = false,
-        .wayland = true,
+        .x11 = true,
+        .wayland = false,
     });
     const zopengl = b.dependency("zopengl", .{});
 
