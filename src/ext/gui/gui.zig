@@ -217,7 +217,7 @@ fn draw(self: *GUI) bool {
                 const value_text: [:0]u8 = info.name[0..name.len :0];
 
                 switch (param_type) {
-                    .Attack, .Release, .Decay, .Sustain => {
+                    .Attack, .Release, .Decay, .Sustain, .Octave1, .Octave2, .Pitch1, .Pitch2, .Mix => {
                         var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
                         if (zgui.sliderFloat(
                             value_text,
@@ -244,14 +244,14 @@ fn draw(self: *GUI) bool {
                             }
                         }
                     },
-                    .WaveShape => {
+                    .WaveShape1, .WaveShape2 => {
                         // TODO replace these with iconic buttons
                         inline for (std.meta.fields(Wave)) |field| {
                             const wave: Wave = @enumFromInt(field.value);
                             if (zgui.radioButton(field.name, .{
-                                .active = self.plugin.params.get(.WaveShape).Wave == wave,
+                                .active = self.plugin.params.get(param_type).Wave == wave,
                             })) {
-                                self.plugin.params.set(.WaveShape, .{ .Wave = wave }, .{
+                                self.plugin.params.set(param_type, .{ .Wave = wave }, .{
                                     .should_notify_host = true,
                                 }) catch return false;
                             }

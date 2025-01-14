@@ -55,8 +55,15 @@ pub fn processVoice(self: *Voices, voice_index: u32) !void {
 
     const voice: *Voice = self.getVoice(@intCast(voice_index)).?;
 
-    const wave_value: u32 = @intFromEnum(self.plugin.params.values.get(.WaveShape).Wave);
-    const wave_type: Wave = try std.meta.intToEnum(Wave, wave_value);
+    const osc1_wave_value: u32 = @intFromEnum(self.plugin.params.values.get(.WaveShape1).Wave);
+    const osc1_wave_shape: Wave = try std.meta.intToEnum(Wave, osc1_wave_value);
+    const osc2_wave_value: u32 = @intFromEnum(self.plugin.params.values.get(.WaveShape2).Wave);
+    const osc2_wave_shape: Wave = try std.meta.intToEnum(Wave, osc2_wave_value);
+    const osc1_detune: f64 = self.plugin.params.values.get(.Pitch1).Float;
+    const osc2_detune: f64 = self.plugin.params.values.get(.Pitch2).Float;
+    const osc1_octave: f64 = self.plugin.params.values.get(.Octave1).Float;
+    const osc2_octave: f64 = self.plugin.params.values.get(.Octave2).Float;
+    const oscillator_mix: f64 = self.plugin.params.values.get(.Mix).Float;
 
     var render_payload = self.render_payload.?;
     const plugin = self.plugin;
@@ -70,7 +77,9 @@ pub fn processVoice(self: *Voices, voice_index: u32) !void {
         const t: f64 = @floatFromInt(voice.elapsed_frames);
 
         // retrieve the wave data from the pre-calculated table
-        wave = waves.get(&plugin.wave_table, wave_type, plugin.sample_rate.?, voice.getTunedKey(), t);
+        const osc1_wave = waves.get(&plugin.wave_table, osc1_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc1_detune, osc1_octave), t);
+        const osc2_wave = waves.get(&plugin.wave_table, osc2_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc2_detune, osc2_octave), t);
+        wave = (osc1_wave * (1 - oscillator_mix)) + (osc2_wave * oscillator_mix);
 
         // Elapse the voice time by a frame and update envelope
         voice.elapsed_frames += 1;
@@ -109,8 +118,12 @@ pub const Voice = struct {
     adsr: ADSR = ADSR.init(0, 0, 1, 0),
     elapsed_frames: u64 = 0,
 
-    pub fn getTunedKey(self: *const Voice) f64 {
-        return @as(f64, @floatFromInt(@intFromEnum(self.key))) + self.expression_values.get(.tuning);
+    pub fn getTunedKey(self: *const Voice, oscillator_detune: f64, oscillator_octave: f64) f64 {
+        const base_key: f64 = @floatFromInt(@intFromEnum(self.key));
+        // The octave is from -2 to 3, where -2 is 32' and 3 is 1'
+        // the base value of 440Hz is at 8', or an integer value of 0
+        const octave_offset = oscillator_octave * 12;
+        return base_key + self.expression_values.get(.tuning) + oscillator_detune + octave_offset;
     }
 };
 

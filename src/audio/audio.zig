@@ -16,11 +16,11 @@ const Expression = Voices.Expression;
 
 fn calculatePhaseOffsetForSecondVoice(voice: *const Voice, previous_voice: ?*const Voice, sample_rate: f64) u64 {
     if (previous_voice) |prev| {
-        const original_key = prev.getTunedKey();
+        const original_key = prev.getTunedKey(0, 0);
         const original_frequency = waves.getFrequency(original_key);
         const original_phase = (original_frequency / sample_rate) * @as(f64, @floatFromInt(prev.elapsed_frames));
 
-        const new_key = voice.getTunedKey();
+        const new_key = voice.getTunedKey(0, 0);
         const new_frequency = waves.getFrequency(new_key);
         // (new_frequency / sample_rate) * frames = original_phase
         return @intFromFloat(original_phase * (sample_rate / new_frequency));
@@ -124,6 +124,7 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
     if (should_use_threadpool) {
         if (plugin.host.getExtension(plugin.host, clap.ext.thread_pool.id)) |ext_raw| {
             const thread_pool: *const clap.ext.thread_pool.Host = @ptrCast(@alignCast(ext_raw));
+            // This calls Voices.processVoice under the hood
             did_render_audio = thread_pool.requestExec(plugin.host, @intCast(plugin.voices.getVoiceCount()));
             if (!did_render_audio) {
                 std.log.debug("Unable to dispatch voices to thread pool! Num voices: {d}", .{plugin.voices.getVoiceCount()});

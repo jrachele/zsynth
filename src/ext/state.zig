@@ -99,6 +99,8 @@ fn createParamsFromBuffer(allocator: std.mem.Allocator, buffer: []u8) ?Params.Pa
     var params = Params.ParameterArray.init(Params.param_defaults);
     if (Params.param_count != params_data.value.len) {
         std.log.warn("Parameter count {d} does not match length of previously saved parameter data {d}", .{ Params.param_count, params_data.value.len });
+        // Return the default parameter payload
+        return params;
     }
     for (params_data.value, 0..) |param, i| {
         if (i >= Params.param_count) break;

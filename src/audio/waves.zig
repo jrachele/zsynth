@@ -16,7 +16,8 @@ pub const sample_count = 256;
 const waveshape_count = std.meta.fields(Wave).len;
 
 const half_steps_per_table = 2.0;
-const table_count = 128 / half_steps_per_table;
+const key_count = 128;
+const table_count = key_count / half_steps_per_table;
 comptime {
     if (@mod(table_count, 1.0) != 0.0) {
         @compileError("half_steps_per_table must be a divisor of 128!");
@@ -99,7 +100,12 @@ inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
 pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: f64, frames: f64) f64 {
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
-        return -1;
+        return 0;
+    }
+
+    // Too low or high to hear
+    if (key < 0 or key >= key_count) {
+        return 0;
     }
 
     const frequency = getFrequency(key);
