@@ -21,6 +21,8 @@ const platform_gui = switch (builtin.os.tag) {
 const cocoa = @import("cocoa.zig");
 
 const waves = @import("../../audio/waves.zig");
+const voices = @import("../../audio/voices.zig");
+const Voice = voices.Voice;
 const Wave = waves.Wave;
 
 plugin: *Plugin,
@@ -107,6 +109,7 @@ fn createWindow(self: *GUI) !void {
 
     zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
+    zgui.plot.init();
 
     if (builtin.os.tag == .macos) {
         // Hiding the dock by setting the activation policy to accessory prevents a strange focus loss bug
@@ -123,6 +126,7 @@ fn destroyWindow(self: *GUI) void {
 
     var windowWasDestroyed = false;
     if (self.window) |window| {
+        zgui.plot.deinit();
         zgui.backend.deinit();
         zgui.deinit();
         window.destroy();
@@ -201,63 +205,133 @@ fn draw(self: *GUI) bool {
         },
     )) {
         zgui.text("Voices: {} / {}", .{ self.plugin.voices.getVoiceCount(), self.plugin.voices.getVoiceCapacity() });
-        // Populate the widgets based on the parameters
-        // Mimick what CLAP does
-        zgui.text("Parameters", .{});
 
-        for (0..Params.param_count) |i| {
-            const index: u32 = @intCast(i);
-            var info: clap.ext.params.Info = undefined;
-            if (Params._getInfo(&self.plugin.plugin, index, &info)) {
-                const param_type = std.meta.intToEnum(Params.Parameter, index) catch {
-                    std.debug.panic("Unable to cast index to parameter enum! {d}", .{index});
-                };
-
-                const name = std.mem.sliceTo(&info.name, 0);
-                const value_text: [:0]u8 = info.name[0..name.len :0];
-
-                switch (param_type) {
-                    .Attack, .Release, .Decay, .Sustain, .Octave1, .Octave2, .Pitch1, .Pitch2, .Mix => {
-                        var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
-                        if (zgui.sliderFloat(
-                            value_text,
-                            .{
-                                .v = &val,
-                                .min = @floatCast(info.min_value),
-                                .max = @floatCast(info.max_value),
-                            },
-                        )) {
-                            self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatCast(val)) }, .{
-                                .should_notify_host = true,
-                            }) catch return false;
-                        }
-                    },
-                    .ScaleVoices, .DebugBool1, .DebugBool2 => {
-                        if (builtin.mode == .Debug) {
-                            var val: bool = self.plugin.params.get(param_type).Bool;
-                            if (zgui.checkbox(value_text, .{
-                                .v = &val,
-                            })) {
-                                self.plugin.params.set(param_type, .{ .Bool = val }, .{
-                                    .should_notify_host = true,
-                                }) catch return false;
-                            }
-                        }
-                    },
-                    .WaveShape1, .WaveShape2 => {
-                        // TODO replace these with iconic buttons
-                        inline for (std.meta.fields(Wave)) |field| {
-                            const wave: Wave = @enumFromInt(field.value);
-                            if (zgui.radioButton(field.name, .{
-                                .active = self.plugin.params.get(param_type).Wave == wave,
-                            })) {
-                                self.plugin.params.set(param_type, .{ .Wave = wave }, .{
-                                    .should_notify_host = true,
-                                }) catch return false;
-                            }
-                        }
-                    },
+        {
+            if (zgui.beginChild("Parameters##Child", .{
+                .w = zgui.getContentRegionAvail()[0] * 0.5,
+                // .h = 300.0,
+                .child_flags = .{
+                    // .border = true,
+                },
+                .window_flags = .{},
+            })) {
+                zgui.separatorText("Parameters##Sep");
+                if (zgui.beginChild("Oscillator 1##Child", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    zgui.text("Oscillator 1", .{});
+                    zgui.sameLine(.{});
+                    self.renderMix(true);
+                    self.renderParam(Params.Parameter.WaveShape1);
+                    self.renderParam(Params.Parameter.Octave1);
+                    self.renderParam(Params.Parameter.Pitch1);
+                    zgui.endChild();
                 }
+                if (zgui.beginChild("Oscillator 2##Child", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    zgui.text("Oscillator 2", .{});
+                    zgui.sameLine(.{});
+                    self.renderMix(false);
+                    self.renderParam(Params.Parameter.WaveShape2);
+                    self.renderParam(Params.Parameter.Octave2);
+                    self.renderParam(Params.Parameter.Pitch2);
+                    zgui.endChild();
+                }
+                if (zgui.beginChild("ADSR##Child", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    zgui.text("Voice Envelope", .{});
+                    self.renderParam(Params.Parameter.Attack);
+                    self.renderParam(Params.Parameter.Decay);
+                    self.renderParam(Params.Parameter.Sustain);
+                    self.renderParam(Params.Parameter.Release);
+                    zgui.endChild();
+                }
+                if (zgui.beginChild("Options##Child", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    zgui.text("Options", .{});
+                    self.renderParam(Params.Parameter.ScaleVoices);
+                    if (builtin.mode == .Debug) {
+                        zgui.sameLine(.{});
+                        self.renderParam(Params.Parameter.DebugBool1);
+                        zgui.sameLine(.{});
+                        self.renderParam(Params.Parameter.DebugBool2);
+                    }
+                    zgui.endChild();
+                }
+                zgui.endChild();
+            }
+            zgui.sameLine(.{});
+            if (zgui.beginChild("Display##Child", .{})) {
+                zgui.separatorText("Display##Sep");
+                if (zgui.beginChild("Oscillators##Display", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    // Calculate an example of what the audio engine is actually outputting for visualization purposes
+                    const resolution = 256;
+                    const sample_rate = self.plugin.sample_rate.?;
+                    const diag_voice: Voice = .{ .key = @enumFromInt(57) };
+
+                    const osc1_wave_shape = self.plugin.params.get(.WaveShape1).Wave;
+                    const osc1_octave = self.plugin.params.get(.Octave1).Float;
+                    const osc1_detune = self.plugin.params.get(.Pitch1).Float;
+                    const osc2_wave_shape = self.plugin.params.get(.WaveShape2).Wave;
+                    const osc2_octave = self.plugin.params.get(.Octave2).Float;
+                    const osc2_detune = self.plugin.params.get(.Pitch2).Float;
+                    const oscillator_mix = self.plugin.params.get(.Mix).Float;
+
+                    var xv: [resolution]f64 = [_]f64{0} ** resolution;
+                    var osc1_yv: [resolution]f64 = [_]f64{0} ** resolution;
+                    var osc2_yv: [resolution]f64 = [_]f64{0} ** resolution;
+                    var sum_yv: [resolution]f64 = [_]f64{0} ** resolution;
+                    for (0..resolution) |i| {
+                        xv[i] = @floatFromInt(i);
+                        osc1_yv[i] = waves.get(&self.plugin.wave_table, osc1_wave_shape, sample_rate, diag_voice.getTunedKey(osc1_detune, osc1_octave), @as(f64, @floatFromInt(i)));
+                        osc2_yv[i] = waves.get(&self.plugin.wave_table, osc2_wave_shape, sample_rate, diag_voice.getTunedKey(osc2_detune, osc2_octave), @as(f64, @floatFromInt(i)));
+                        sum_yv[i] = osc1_yv[i] + osc2_yv[i];
+                        sum_yv[i] = (osc1_yv[i] * (1 - oscillator_mix)) + (osc2_yv[i] * oscillator_mix);
+                    }
+                    if (zgui.plot.beginPlot("Wave Form##Plot", .{
+                        .flags = .{
+                            .no_box_select = true,
+                            .no_mouse_text = true,
+                            .no_inputs = true,
+                            .no_legend = true,
+                            .no_menus = true,
+                            .no_frame = true,
+                        },
+                    })) {
+                        zgui.plot.setupAxis(.x1, .{ .flags = .{
+                            .no_label = true,
+                            .no_tick_labels = true,
+                            .no_tick_marks = true,
+                        } });
+                        zgui.plot.setupAxis(.y1, .{ .flags = .{
+                            .no_label = true,
+                            .no_tick_labels = true,
+                            .no_tick_marks = true,
+                        } });
+                        zgui.plot.plotLine("Both", f64, .{
+                            .xv = &xv,
+                            .yv = &sum_yv,
+                        });
+                        zgui.plot.endPlot();
+                    }
+                    zgui.endChild();
+                }
+                zgui.endChild();
             }
         }
     }
@@ -268,6 +342,158 @@ fn draw(self: *GUI) bool {
     window.swapBuffers();
 
     return true;
+}
+
+fn renderParam(self: *GUI, param: Params.Parameter) void {
+    const index: u32 = @intFromEnum(param);
+    var info: clap.ext.params.Info = undefined;
+    if (!Params._getInfo(&self.plugin.plugin, index, &info)) {
+        return;
+    }
+
+    const param_type = std.meta.intToEnum(Params.Parameter, index) catch {
+        std.debug.panic("Unable to cast index to parameter enum! {d}", .{index});
+        return;
+    };
+
+    const name = std.mem.sliceTo(&info.name, 0);
+    const value_text: [:0]u8 = info.name[0..name.len :0];
+    switch (param_type) {
+        .Attack,
+        .Release,
+        .Decay,
+        .Pitch1,
+        .Pitch2,
+        => {
+            var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
+            var param_text_buf: [256]u8 = [_]u8{0} ** 256;
+            _ = Params._valueToText(&self.plugin.plugin, @enumFromInt(index), val, &param_text_buf, 256);
+            if (zgui.sliderFloat(
+                value_text,
+                .{
+                    .v = &val,
+                    .min = @floatCast(info.min_value),
+                    .max = @floatCast(info.max_value),
+                    .cfmt = param_text_buf[0..255 :0],
+                },
+            )) {
+                self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatCast(val)) }, .{
+                    .should_notify_host = true,
+                }) catch return;
+            }
+        },
+        // Percentage sliders
+        .Sustain, .Mix => {
+            var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
+            var param_text_buf: [256]u8 = [_]u8{0} ** 256;
+            _ = Params._valueToText(&self.plugin.plugin, @enumFromInt(index), val, &param_text_buf, 256);
+            if (std.mem.indexOf(u8, &param_text_buf, "%")) |percent_index| {
+                if (percent_index < 255) {
+                    // Add an extra percent to not confuse ImGui
+                    param_text_buf[percent_index + 1] = '%';
+                }
+            }
+            if (zgui.sliderFloat(
+                value_text,
+                .{
+                    .v = &val,
+                    .min = @floatCast(info.min_value),
+                    .max = @floatCast(info.max_value),
+                    .cfmt = param_text_buf[0..255 :0],
+                },
+            )) {
+                self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatCast(val)) }, .{
+                    .should_notify_host = true,
+                }) catch return;
+            }
+        },
+        // Int sliders
+        .Octave1, .Octave2 => {
+            const val_float: f32 = @floatCast(self.plugin.params.get(param_type).Float);
+            var val: i32 = @intFromFloat(val_float);
+            var param_text_buf: [256]u8 = [_]u8{0} ** 256;
+            _ = Params._valueToText(&self.plugin.plugin, @enumFromInt(index), val_float, &param_text_buf, 256);
+            if (zgui.sliderInt(
+                value_text,
+                .{
+                    .v = &val,
+                    .min = @intFromFloat(info.min_value),
+                    .max = @intFromFloat(info.max_value),
+                    .cfmt = param_text_buf[0..255 :0],
+                },
+            )) {
+                self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatFromInt(val)) }, .{
+                    .should_notify_host = true,
+                }) catch return;
+            }
+        },
+        .ScaleVoices, .DebugBool1, .DebugBool2 => {
+            if (builtin.mode == .Debug) {
+                var val: bool = self.plugin.params.get(param_type).Bool;
+                if (zgui.checkbox(value_text, .{
+                    .v = &val,
+                })) {
+                    self.plugin.params.set(param_type, .{ .Bool = val }, .{
+                        .should_notify_host = true,
+                    }) catch return;
+                }
+            }
+        },
+        .WaveShape1, .WaveShape2 => {
+            // TODO replace these with iconic buttons
+            inline for (std.meta.fields(Wave), 0..) |field, i| {
+                if (i > 0) {
+                    zgui.sameLine(.{});
+                }
+                const wave: Wave = @enumFromInt(field.value);
+                if (zgui.radioButton(field.name, .{
+                    .active = self.plugin.params.get(param_type).Wave == wave,
+                })) {
+                    self.plugin.params.set(param_type, .{ .Wave = wave }, .{
+                        .should_notify_host = true,
+                    }) catch return;
+                }
+            }
+        },
+    }
+}
+
+fn renderMix(self: *GUI, osc1: bool) void {
+    const index: u32 = @intFromEnum(Params.Parameter.Mix);
+    var info: clap.ext.params.Info = undefined;
+    if (!Params._getInfo(&self.plugin.plugin, index, &info)) {
+        return;
+    }
+
+    var val: f32 = @floatCast(self.plugin.params.get(.Mix).Float);
+    if (osc1) {
+        val = 1 - val;
+    }
+
+    var param_text_buf: [256]u8 = [_]u8{0} ** 256;
+    _ = Params._valueToText(&self.plugin.plugin, @enumFromInt(index), val, &param_text_buf, 256);
+    if (std.mem.indexOf(u8, &param_text_buf, "%")) |percent_index| {
+        if (percent_index < 255) {
+            // Add an extra percent to not confuse ImGui
+            param_text_buf[percent_index + 1] = '%';
+        }
+    }
+    if (zgui.sliderFloat(
+        if (osc1) "Mix##Osc1" else "Mix##Osc2",
+        .{
+            .v = &val,
+            .min = @floatCast(info.min_value),
+            .max = @floatCast(info.max_value),
+            .cfmt = param_text_buf[0..255 :0],
+        },
+    )) {
+        if (osc1) {
+            val = 1 - val;
+        }
+        self.plugin.params.set(.Mix, .{ .Float = @as(f64, @floatCast(val)) }, .{
+            .should_notify_host = true,
+        }) catch return;
+    }
 }
 
 fn setTitle(self: *GUI, title: [:0]const u8) void {
