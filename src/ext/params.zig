@@ -8,6 +8,13 @@ const Plugin = @import("../plugin.zig");
 
 const Wave = @import("../audio/waves.zig").Wave;
 
+// TODO Move this
+pub const Filter = enum {
+    LowPass,
+    BandPass,
+    HighPass,
+};
+
 const Info = clap.ext.params.Info;
 
 pub const Parameter = enum {
@@ -27,6 +34,11 @@ pub const Parameter = enum {
     Mix,
     ScaleVoices,
 
+    // Filter
+    FilterType,
+    FilterFreq,
+    FilterQ,
+
     // Debug params
     DebugBool1,
     DebugBool2,
@@ -35,6 +47,7 @@ pub const Parameter = enum {
 pub const ParameterValue = union(enum) {
     Float: f64,
     Wave: Wave,
+    Filter: Filter,
     Bool: bool,
 
     pub fn asFloat(parameterValue: ParameterValue) f64 {
@@ -44,6 +57,9 @@ pub const ParameterValue = union(enum) {
             },
             .Wave => {
                 return @floatFromInt(@intFromEnum(parameterValue.Wave));
+            },
+            .Filter => {
+                return @floatFromInt(@intFromEnum(parameterValue.Filter));
             },
             .Bool => {
                 if (parameterValue.Bool) {
@@ -71,6 +87,10 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, ParameterValue, 
     .Octave1 = .{ .Float = 0.0 },
     .Octave2 = .{ .Float = -1.0 },
     .Mix = .{ .Float = 0.0 },
+
+    .FilterType = .{ .Filter = Filter.LowPass },
+    .FilterFreq = .{ .Float = 20000 },
+    .FilterQ = .{ .Float = 1.0 },
 
     .ScaleVoices = .{ .Bool = false },
 
@@ -352,6 +372,59 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
             std.mem.copyForwards(u8, &info.name, "Mix");
             std.mem.copyForwards(u8, &info.module, "Oscillator/Mix");
         },
+        Parameter.FilterType => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.FilterType.asFloat(),
+                .min_value = 0,
+                .max_value = std.meta.fields(Filter).len,
+                .name = [_]u8{0} ** 256,
+
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                    .is_enum = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.FilterType)),
+                .module = [_]u8{0} ** 1024,
+            };
+            std.mem.copyForwards(u8, &info.name, "Filter Type");
+            std.mem.copyForwards(u8, &info.module, "Filter/Type");
+        },
+        Parameter.FilterFreq => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.FilterFreq.Float,
+                .min_value = 0,
+                .max_value = 20000,
+                .name = [_]u8{0} ** 256,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.FilterFreq)),
+                .module = [_]u8{0} ** 1024,
+            };
+            std.mem.copyForwards(u8, &info.name, "Frequency Cutoff");
+            std.mem.copyForwards(u8, &info.module, "Filter/Frequency");
+        },
+        Parameter.FilterQ => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.FilterQ.Float,
+                .min_value = 0,
+                .max_value = 100,
+                .name = [_]u8{0} ** 256,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.FilterQ)),
+                .module = [_]u8{0} ** 1024,
+            };
+            std.mem.copyForwards(u8, &info.name, "Filter Q Factor");
+            std.mem.copyForwards(u8, &info.module, "Filter/Q");
+        },
         Parameter.ScaleVoices => {
             info.* = .{
                 .cookie = null,
@@ -443,9 +516,25 @@ pub fn _valueToText(
                 bufSlice = std.fmt.bufPrint(out_buf, "{d:.0} ms", .{value}) catch return false;
             }
         },
+        // Hz-based parameters
+        Parameter.FilterFreq => {
+            bufSlice = std.fmt.bufPrint(out_buf, "{d:.2} Hz", .{value}) catch return false;
+        },
         // Percentage-based parameters
         Parameter.Sustain, Parameter.Mix => {
             bufSlice = std.fmt.bufPrint(out_buf, "{d:.2}%", .{value * 100}) catch return false;
+        },
+        // Step parameters
+        Parameter.Pitch1, Parameter.Pitch2 => {
+            bufSlice = std.fmt.bufPrint(out_buf, "{d:.2} st", .{value}) catch return false;
+        },
+        // Octaves parameters
+        Parameter.Octave1, Parameter.Octave2 => {
+            bufSlice = std.fmt.bufPrint(out_buf, "{d:.0}\'", .{std.math.pow(f64, 2, 3 - value)}) catch return false;
+        },
+        // No-unit params
+        Parameter.FilterQ => {
+            bufSlice = std.fmt.bufPrint(out_buf, "{d:.0}", .{value}) catch return false;
         },
         // Wave shapes
         Parameter.WaveShape1, Parameter.WaveShape2 => {
@@ -453,13 +542,11 @@ pub fn _valueToText(
             const wave: Wave = @enumFromInt(intValue);
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
-        // Step parameters
-        Parameter.Pitch1, Parameter.Pitch2 => {
-            bufSlice = std.fmt.bufPrint(out_buf, "{d:.2} st", .{value}) catch return false;
-        },
-        // No-unit parameters
-        Parameter.Octave1, Parameter.Octave2 => {
-            bufSlice = std.fmt.bufPrint(out_buf, "{d:.0}\'", .{std.math.pow(f64, 2, 3 - value)}) catch return false;
+        // Filter
+        Parameter.FilterType => {
+            const intValue: u32 = @intFromFloat(value);
+            const filter: Filter = @enumFromInt(intValue);
+            bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(filter)}) catch return false;
         },
         // Boolean parameters
         Parameter.ScaleVoices, Parameter.DebugBool1, Parameter.DebugBool2 => {
@@ -513,6 +600,20 @@ fn _textToValue(
             }
             return false;
         },
+        // Filter parameters
+        .FilterType => {
+            if (std.mem.startsWith(u8, value, @tagName(Filter.BandPass))) {
+                out_value.* = @intFromEnum(Filter.BandPass);
+                return true;
+            } else if (std.mem.startsWith(u8, value, @tagName(Filter.LowPass))) {
+                out_value.* = @intFromEnum(Filter.LowPass);
+                return true;
+            } else if (std.mem.startsWith(u8, value, @tagName(Filter.HighPass))) {
+                out_value.* = @intFromEnum(Filter.HighPass);
+                return true;
+            }
+            return false;
+        },
         // Bool parameters
         .ScaleVoices, .DebugBool1, .DebugBool2 => {
             if (std.mem.startsWith(u8, value, "t")) {
@@ -528,7 +629,7 @@ fn _textToValue(
 
     var unit_string: [64]u8 = undefined;
     var val_float: f64 = 0;
-    const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%|st)?\\s*";
+    const pattern = "\\s*(\\d+\\.?\\d*)\\s*(S|s|seconds|MS|Ms|ms|millis|milliseconds|%|st|Hz|hz|HZ)?\\s*";
     var re = regex.Regex.compile(plugin.allocator, pattern) catch return false;
     defer re.deinit();
 
@@ -569,7 +670,7 @@ fn _textToValue(
             }
         },
         // Parameters whose units don't influence value
-        Parameter.Pitch1, Parameter.Pitch2, Parameter.Octave1, Parameter.Octave2 => {
+        Parameter.Pitch1, Parameter.Pitch2, Parameter.Octave1, Parameter.Octave2, Parameter.FilterFreq, Parameter.FilterQ => {
             out_value.* = val_float;
         },
         else => {
@@ -593,9 +694,10 @@ fn processEvent(plugin: *Plugin, event: *const clap.events.Header) bool {
         const param: Parameter = @enumFromInt(index);
         const value: ParameterValue = switch (param) {
             // There is perhaps a better way of doing this, but I don't know what that is.
-            .Attack, .Decay, .Release, .Sustain, .Octave1, .Octave2, .Pitch1, .Pitch2, .Mix => .{ .Float = param_event.value },
+            .Attack, .Decay, .Release, .Sustain, .Octave1, .Octave2, .Pitch1, .Pitch2, .Mix, .FilterFreq, .FilterQ => .{ .Float = param_event.value },
             // Cast the float as an int first, then cast as an enum
             .WaveShape1, .WaveShape2 => .{ .Wave = @as(Wave, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
+            .FilterType => .{ .Filter = @as(Filter, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
             .ScaleVoices, .DebugBool1, .DebugBool2 => .{ .Bool = if (param_event.value == 1.0) true else false },
         };
 

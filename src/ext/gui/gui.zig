@@ -24,6 +24,7 @@ const waves = @import("../../audio/waves.zig");
 const voices = @import("../../audio/voices.zig");
 const Voice = voices.Voice;
 const Wave = waves.Wave;
+const Filter = Params.Filter;
 
 plugin: *Plugin,
 allocator: std.mem.Allocator,
@@ -201,12 +202,17 @@ fn draw(self: *GUI) bool {
                 .no_move = true,
                 .no_resize = true,
                 .no_title_bar = true,
+                .always_auto_resize = true,
             },
         },
     )) {
+        zgui.text("ZSynth by Julian Rachele", .{});
+        // TODO: calculate and right align this properly if this design is to persist
+        zgui.sameLine(.{ .spacing = display_size[0] - 250 });
         zgui.text("Voices: {} / {}", .{ self.plugin.voices.getVoiceCount(), self.plugin.voices.getVoiceCapacity() });
 
         {
+            zgui.separatorText("Parameters##Sep");
             if (zgui.beginChild("Parameters##Child", .{
                 .w = zgui.getContentRegionAvail()[0] * 0.5,
                 // .h = 300.0,
@@ -215,7 +221,6 @@ fn draw(self: *GUI) bool {
                 },
                 .window_flags = .{},
             })) {
-                zgui.separatorText("Parameters##Sep");
                 if (zgui.beginChild("Oscillator 1##Child", .{ .child_flags = .{
                     .border = true,
                     .auto_resize_y = true,
@@ -273,6 +278,19 @@ fn draw(self: *GUI) bool {
             }
             zgui.sameLine(.{});
             if (zgui.beginChild("Display##Child", .{})) {
+                if (zgui.beginChild("Filter##Child", .{ .child_flags = .{
+                    .border = true,
+                    .auto_resize_y = true,
+                    .always_auto_resize = true,
+                } })) {
+                    zgui.text("Filter", .{});
+                    zgui.sameLine(.{});
+                    self.renderParam(Params.Parameter.FilterType);
+                    self.renderParam(Params.Parameter.FilterFreq);
+                    self.renderParam(Params.Parameter.FilterQ);
+                    zgui.endChild();
+                }
+                zgui.spacing();
                 zgui.separatorText("Display##Sep");
                 if (zgui.beginChild("Oscillators##Display", .{ .child_flags = .{
                     .border = true,
@@ -312,6 +330,7 @@ fn draw(self: *GUI) bool {
                             .no_menus = true,
                             .no_frame = true,
                         },
+                        .h = 200,
                     })) {
                         zgui.plot.setupAxis(.x1, .{ .flags = .{
                             .no_label = true,
@@ -364,6 +383,8 @@ fn renderParam(self: *GUI, param: Params.Parameter) void {
         .Decay,
         .Pitch1,
         .Pitch2,
+        .FilterFreq,
+        .FilterQ,
         => {
             var val: f32 = @floatCast(self.plugin.params.get(param_type).Float);
             var param_text_buf: [256]u8 = [_]u8{0} ** 256;
@@ -450,6 +471,21 @@ fn renderParam(self: *GUI, param: Params.Parameter) void {
                     .active = self.plugin.params.get(param_type).Wave == wave,
                 })) {
                     self.plugin.params.set(param_type, .{ .Wave = wave }, .{
+                        .should_notify_host = true,
+                    }) catch return;
+                }
+            }
+        },
+        .FilterType => {
+            inline for (std.meta.fields(Filter), 0..) |field, i| {
+                if (i > 0) {
+                    zgui.sameLine(.{});
+                }
+                const filter: Filter = @enumFromInt(field.value);
+                if (zgui.radioButton(field.name, .{
+                    .active = self.plugin.params.get(param_type).Filter == filter,
+                })) {
+                    self.plugin.params.set(param_type, .{ .Filter = filter }, .{
                         .should_notify_host = true,
                     }) catch return;
                 }
