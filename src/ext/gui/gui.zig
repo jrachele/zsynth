@@ -20,6 +20,7 @@ const platform_gui = switch (builtin.os.tag) {
 
 const cocoa = @import("cocoa.zig");
 
+const audio = @import("../../audio/audio.zig");
 const waves = @import("../../audio/waves.zig");
 const voices = @import("../../audio/voices.zig");
 const Voice = voices.Voice;
@@ -206,9 +207,9 @@ fn draw(self: *GUI) bool {
             },
         },
     )) {
-        zgui.text("ZSynth by Julian Rachele", .{});
+        zgui.text("ZSynth by juge", .{});
         // TODO: calculate and right align this properly if this design is to persist
-        zgui.sameLine(.{ .spacing = display_size[0] - 250 });
+        zgui.sameLine(.{ .spacing = display_size[0] - 190 });
         zgui.text("Voices: {} / {}", .{ self.plugin.voices.getVoiceCount(), self.plugin.voices.getVoiceCapacity() });
 
         {
@@ -285,6 +286,7 @@ fn draw(self: *GUI) bool {
                 } })) {
                     zgui.text("Filter", .{});
                     zgui.sameLine(.{});
+                    self.renderParam(Params.Parameter.FilterEnable);
                     self.renderParam(Params.Parameter.FilterType);
                     self.renderParam(Params.Parameter.FilterFreq);
                     self.renderParam(Params.Parameter.FilterQ);
@@ -297,6 +299,7 @@ fn draw(self: *GUI) bool {
                     .auto_resize_y = true,
                     .always_auto_resize = true,
                 } })) {
+                    // TODO: Potentially separate out the calculation part of the engine
                     // Calculate an example of what the audio engine is actually outputting for visualization purposes
                     const resolution = 256;
                     const sample_rate = self.plugin.sample_rate.?;
@@ -308,19 +311,29 @@ fn draw(self: *GUI) bool {
                     const osc2_wave_shape = self.plugin.params.get(.WaveShape2).Wave;
                     const osc2_octave = self.plugin.params.get(.Octave2).Float;
                     const osc2_detune = self.plugin.params.get(.Pitch2).Float;
-                    const oscillator_mix = self.plugin.params.get(.Mix).Float;
+                    const oscillator_mix: f32 = @floatCast(self.plugin.params.get(.Mix).Float);
 
-                    var xv: [resolution]f64 = [_]f64{0} ** resolution;
-                    var osc1_yv: [resolution]f64 = [_]f64{0} ** resolution;
-                    var osc2_yv: [resolution]f64 = [_]f64{0} ** resolution;
-                    var sum_yv: [resolution]f64 = [_]f64{0} ** resolution;
+                    var xv: [resolution]f32 = [_]f32{0} ** resolution;
+                    var osc1_yv: [resolution]f32 = [_]f32{0} ** resolution;
+                    var osc2_yv: [resolution]f32 = [_]f32{0} ** resolution;
+                    var sum_yv: [resolution]f32 = [_]f32{0} ** resolution;
                     for (0..resolution) |i| {
                         xv[i] = @floatFromInt(i);
-                        osc1_yv[i] = waves.get(&self.plugin.wave_table, osc1_wave_shape, sample_rate, diag_voice.getTunedKey(osc1_detune, osc1_octave), @as(f64, @floatFromInt(i)));
-                        osc2_yv[i] = waves.get(&self.plugin.wave_table, osc2_wave_shape, sample_rate, diag_voice.getTunedKey(osc2_detune, osc2_octave), @as(f64, @floatFromInt(i)));
+                        osc1_yv[i] = @floatCast(waves.get(&self.plugin.wave_table, osc1_wave_shape, sample_rate, diag_voice.getTunedKey(osc1_detune, osc1_octave), @as(f64, @floatFromInt(i))));
+                        osc2_yv[i] = @floatCast(waves.get(&self.plugin.wave_table, osc2_wave_shape, sample_rate, diag_voice.getTunedKey(osc2_detune, osc2_octave), @as(f64, @floatFromInt(i))));
                         sum_yv[i] = osc1_yv[i] + osc2_yv[i];
                         sum_yv[i] = (osc1_yv[i] * (1 - oscillator_mix)) + (osc2_yv[i] * oscillator_mix);
                     }
+
+                    const enable_filtering = self.plugin.params.get(.FilterEnable).Bool;
+                    const filter_type = self.plugin.params.get(.FilterType).Filter;
+                    const q: f32 = @floatCast(self.plugin.params.get(.FilterQ).Float);
+                    if (enable_filtering) {
+                        const cutoff_freq: f32 = @floatCast(self.plugin.params.get(.FilterFreq).Float);
+                        const sample_rate_f32: f32 = @floatCast(sample_rate);
+                        audio.filter(filter_type, sum_yv[0..], sample_rate_f32, cutoff_freq, q);
+                    }
+
                     if (zgui.plot.beginPlot("Wave Form##Plot", .{
                         .flags = .{
                             .no_box_select = true,
@@ -341,8 +354,9 @@ fn draw(self: *GUI) bool {
                             .no_label = true,
                             .no_tick_labels = true,
                             .no_tick_marks = true,
+                            .auto_fit = true,
                         } });
-                        zgui.plot.plotLine("Both", f64, .{
+                        zgui.plot.plotLine("Both", f32, .{
                             .xv = &xv,
                             .yv = &sum_yv,
                         });
@@ -396,6 +410,9 @@ fn renderParam(self: *GUI, param: Params.Parameter) void {
                     .min = @floatCast(info.min_value),
                     .max = @floatCast(info.max_value),
                     .cfmt = param_text_buf[0..255 :0],
+                    .flags = .{
+                        .logarithmic = param_type == .FilterFreq,
+                    },
                 },
             )) {
                 self.plugin.params.set(param_type, .{ .Float = @as(f64, @floatCast(val)) }, .{
@@ -448,7 +465,7 @@ fn renderParam(self: *GUI, param: Params.Parameter) void {
                 }) catch return;
             }
         },
-        .ScaleVoices, .DebugBool1, .DebugBool2 => {
+        .FilterEnable, .ScaleVoices, .DebugBool1, .DebugBool2 => {
             if (builtin.mode == .Debug) {
                 var val: bool = self.plugin.params.get(param_type).Bool;
                 if (zgui.checkbox(value_text, .{

@@ -31,8 +31,7 @@ job_mutex: std.Thread.Mutex,
 
 const Jobs = packed struct(u32) {
     notify_host_params_changed: bool = false,
-    notify_host_voices_changed: bool = false,
-    _: u30 = 0,
+    _: u31 = 0,
 };
 
 pub const desc = clap.Plugin.Descriptor{
@@ -55,7 +54,7 @@ pub fn fromClapPlugin(clap_plugin: *const clap.Plugin) *Plugin {
 pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
     // Heap objects
     const plugin = try allocator.create(Plugin);
-    const voices = Voices.init(allocator, plugin);
+    const voices = Voices.init(allocator);
     const params = Params.init(allocator);
 
     // Stack objects
@@ -101,20 +100,6 @@ pub fn create(host: *const clap.Host, allocator: std.mem.Allocator) !*const clap
     const plugin = try Plugin.init(allocator, host);
     // This looks dangerous, but the object has the pointer so it's chill
     return &plugin.plugin;
-}
-
-// Notify the host that the voices have changed, which will request a main thread refresh from the host
-pub fn notifyHostVoicesChanged(self: *Plugin) bool {
-    self.job_mutex.lock();
-    defer self.job_mutex.unlock();
-
-    if (self.jobs.notify_host_voices_changed) {
-        std.log.debug("Host is already queued for notify voice changed, discarding request", .{});
-        return false;
-    }
-
-    self.jobs.notify_host_voices_changed = true;
-    return true;
 }
 
 // Notify the host that the params have changed, which will request a main thread refresh from the host
@@ -262,7 +247,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
             }
 
             _ = plugin.voices.voices.orderedRemove(i);
-            _ = plugin.notifyHostVoicesChanged();
             if (i > 0) {
                 i -= 1;
             }
@@ -325,19 +309,6 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
             std.log.err("Unable to query params extension to notify params changed!", .{});
         }
         plugin.jobs.notify_host_params_changed = false;
-    }
-
-    if (plugin.jobs.notify_host_voices_changed) {
-        plugin.job_mutex.lock();
-        defer plugin.job_mutex.unlock();
-        if (plugin.host.getExtension(plugin.host, clap.ext.voice_info.id)) |host_header| {
-            std.log.debug("Notifying host that voices changed", .{});
-            var voice_info_host: *clap.ext.voice_info.Host = @constCast(@ptrCast(@alignCast(host_header)));
-            voice_info_host.changed(plugin.host);
-        } else {
-            std.log.err("Unable to query voice info extension to notify voices changed!", .{});
-        }
-        plugin.jobs.notify_host_voices_changed = false;
     }
 
     // Update the GUI if exists

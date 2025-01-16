@@ -8,7 +8,6 @@ const Plugin = @import("../plugin.zig");
 
 const Wave = @import("../audio/waves.zig").Wave;
 
-// TODO Move this
 pub const Filter = enum {
     LowPass,
     BandPass,
@@ -35,6 +34,7 @@ pub const Parameter = enum {
     ScaleVoices,
 
     // Filter
+    FilterEnable,
     FilterType,
     FilterFreq,
     FilterQ,
@@ -88,6 +88,7 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, ParameterValue, 
     .Octave2 = .{ .Float = -1.0 },
     .Mix = .{ .Float = 0.0 },
 
+    .FilterEnable = .{ .Bool = false },
     .FilterType = .{ .Filter = Filter.LowPass },
     .FilterFreq = .{ .Float = 20000 },
     .FilterQ = .{ .Float = 1.0 },
@@ -372,6 +373,23 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
             std.mem.copyForwards(u8, &info.name, "Mix");
             std.mem.copyForwards(u8, &info.module, "Oscillator/Mix");
         },
+        Parameter.FilterEnable => {
+            info.* = .{
+                .cookie = null,
+                .default_value = param_defaults.FilterEnable.asFloat(),
+                .min_value = 0,
+                .max_value = 1,
+                .name = [_]u8{0} ** 256,
+                .flags = .{
+                    .is_stepped = true,
+                    .is_automatable = true,
+                },
+                .id = @enumFromInt(@intFromEnum(Parameter.FilterEnable)),
+                .module = [_]u8{0} ** 1024,
+            };
+            std.mem.copyForwards(u8, &info.name, "Enable Filter");
+            std.mem.copyForwards(u8, &info.module, "Filter/Enable");
+        },
         Parameter.FilterType => {
             info.* = .{
                 .cookie = null,
@@ -395,7 +413,7 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
             info.* = .{
                 .cookie = null,
                 .default_value = param_defaults.FilterFreq.Float,
-                .min_value = 0,
+                .min_value = 20,
                 .max_value = 20000,
                 .name = [_]u8{0} ** 256,
                 .flags = .{
@@ -549,7 +567,7 @@ pub fn _valueToText(
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(filter)}) catch return false;
         },
         // Boolean parameters
-        Parameter.ScaleVoices, Parameter.DebugBool1, Parameter.DebugBool2 => {
+        Parameter.FilterEnable, Parameter.ScaleVoices, Parameter.DebugBool1, Parameter.DebugBool2 => {
             const bool_value: bool = if (value != 0.0) true else false;
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{if (bool_value) "true" else "false"}) catch return false;
         },
@@ -615,7 +633,7 @@ fn _textToValue(
             return false;
         },
         // Bool parameters
-        .ScaleVoices, .DebugBool1, .DebugBool2 => {
+        .FilterEnable, .ScaleVoices, .DebugBool1, .DebugBool2 => {
             if (std.mem.startsWith(u8, value, "t")) {
                 out_value.* = 1.0;
             } else {
@@ -698,7 +716,7 @@ fn processEvent(plugin: *Plugin, event: *const clap.events.Header) bool {
             // Cast the float as an int first, then cast as an enum
             .WaveShape1, .WaveShape2 => .{ .Wave = @as(Wave, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
             .FilterType => .{ .Filter = @as(Filter, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
-            .ScaleVoices, .DebugBool1, .DebugBool2 => .{ .Bool = if (param_event.value == 1.0) true else false },
+            .FilterEnable, .ScaleVoices, .DebugBool1, .DebugBool2 => .{ .Bool = if (param_event.value == 1.0) true else false },
         };
 
         plugin.params.set(param, value, .{}) catch unreachable;

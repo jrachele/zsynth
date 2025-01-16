@@ -10,7 +10,9 @@ const Voices = @import("voices.zig");
 
 const waves = @import("waves.zig");
 
+const Wave = waves.Wave;
 const Parameter = Params.Parameter;
+const Filter = Params.Filter;
 const Voice = Voices.Voice;
 const Expression = Voices.Expression;
 
@@ -124,7 +126,7 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
     if (should_use_threadpool) {
         if (plugin.host.getExtension(plugin.host, clap.ext.thread_pool.id)) |ext_raw| {
             const thread_pool: *const clap.ext.thread_pool.Host = @ptrCast(@alignCast(ext_raw));
-            // This calls Voices.processVoice under the hood
+            // This calls processVoice under the hood
             did_render_audio = thread_pool.requestExec(plugin.host, @intCast(plugin.voices.getVoiceCount()));
             if (!did_render_audio) {
                 std.log.debug("Unable to dispatch voices to thread pool! Num voices: {d}", .{plugin.voices.getVoiceCount()});
@@ -137,5 +139,129 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
         for (0..plugin.voices.getVoiceCount()) |i| {
             ThreadPool._exec(&plugin.plugin, @intCast(i));
         }
+    }
+
+    // Apply filtering if enabled
+    const enable_filtering = plugin.params.get(.FilterEnable).Bool;
+    const filter_type = plugin.params.get(.FilterType).Filter;
+    const q: f32 = @floatCast(plugin.params.get(.FilterQ).Float);
+    if (enable_filtering) {
+        const sample_rate: f32 = @floatCast(plugin.sample_rate.?);
+        const cutoff_freq: f32 = @floatCast(plugin.params.get(.FilterFreq).Float);
+        filter(filter_type, output_left[start..end], sample_rate, cutoff_freq, q);
+        filter(filter_type, output_right[start..end], sample_rate, cutoff_freq, q);
+    }
+}
+
+pub fn filter(filter_type: Filter, input_signal: []f32, sample_rate: f32, cutoff_freq: f32, q: f32) void {
+    _ = q;
+    switch (filter_type) {
+        .LowPass => {
+            // Use a moog ladder filter
+            // const f = 2.0 * cutoff_freq / sample_rate;
+            // const k = 4.0 * (1.0 - std.math.exp(-2.0 * std.math.pi * f));
+            // const p = 1.0 - k;
+            //
+            // var stage1: f32 = 0;
+            // var stage2: f32 = 0;
+            // var stage3: f32 = 0;
+            // var stage4: f32 = 0;
+            //
+            // for (input_signal, 0..) |input_sample, i| {
+            //     const input_with_feedback = input_sample - q * stage4;
+            //
+            //     stage1 = stage1 * p + k * input_with_feedback;
+            //     stage2 = stage2 * p + k * stage1;
+            //     stage3 = stage3 * p + k * stage2;
+            //     stage4 = stage4 * p + k * stage3;
+            //
+            //     input_signal[i] = stage4;
+            // }
+            for (input_signal, 0..) |input_sample, i| {
+                if (i == 0) continue;
+
+                const dt: f32 = 1.0 / sample_rate;
+                const rc: f32 = 1.0 / (2.0 * std.math.pi * cutoff_freq);
+                const alpha: f32 = dt / (rc + dt);
+                const prev_sample = input_signal[i - 1];
+
+                input_signal[i] = prev_sample + alpha * (input_sample - prev_sample);
+            }
+        },
+        else => {},
+    }
+}
+
+fn filterRC(sample_rate: f32, input_sample: f32, prev_sample: f32, cutoff_freq: f32) f32 {
+    const dt: f32 = 1.0 / sample_rate;
+    const rc: f32 = 1.0 / (2.0 * std.math.pi * cutoff_freq);
+    const alpha: f32 = dt / (rc + dt);
+
+    return prev_sample + alpha * (input_sample - prev_sample);
+}
+
+pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
+    var voices = plugin.voices;
+    if (voices.render_payload == null) {
+        return error.NoRenderPayload;
+    }
+
+    if (voice_index >= voices.voices.items.len) {
+        return error.InvalidVoiceIndex;
+    }
+
+    const voice: *Voice = voices.getVoice(@intCast(voice_index)).?;
+
+    const osc1_wave_value: u32 = @intFromEnum(plugin.params.get(.WaveShape1).Wave);
+    const osc1_wave_shape: Wave = try std.meta.intToEnum(Wave, osc1_wave_value);
+    const osc2_wave_value: u32 = @intFromEnum(plugin.params.get(.WaveShape2).Wave);
+    const osc2_wave_shape: Wave = try std.meta.intToEnum(Wave, osc2_wave_value);
+    const osc1_detune: f64 = plugin.params.get(.Pitch1).Float;
+    const osc2_detune: f64 = plugin.params.get(.Pitch2).Float;
+    const osc1_octave: f64 = plugin.params.get(.Octave1).Float;
+    const osc2_octave: f64 = plugin.params.get(.Octave2).Float;
+    const oscillator_mix: f64 = plugin.params.get(.Mix).Float;
+
+    var render_payload = voices.render_payload.?;
+
+    var index = render_payload.start;
+    while (index < render_payload.end) : (index += 1) {
+        var voice_sum_l: f64 = 0;
+        var voice_sum_r: f64 = 0;
+        var voice_sum_mono: f64 = 0;
+        var wave: f64 = undefined;
+        const t: f64 = @floatFromInt(voice.elapsed_frames);
+
+        // retrieve the wave data from the pre-calculated table
+        const osc1_wave = waves.get(&plugin.wave_table, osc1_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc1_detune, osc1_octave), t);
+        const osc2_wave = waves.get(&plugin.wave_table, osc2_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc2_detune, osc2_octave), t);
+        wave = (osc1_wave * (1 - oscillator_mix)) + (osc2_wave * oscillator_mix);
+
+        // Elapse the voice time by a frame and update envelope
+        voice.elapsed_frames += 1;
+
+        const pan = voice.expression_values.get(Expression.pan);
+        voice_sum_mono += wave * voice.adsr.value * 0.5;
+        voice_sum_l += voice_sum_mono * (1 - pan);
+        voice_sum_r += voice_sum_mono * pan;
+
+        const dt = (1 / plugin.sample_rate.?) * 1000;
+        voice.adsr.update(dt);
+
+        var output_l: f32 = @floatCast(voice_sum_l);
+        var output_r: f32 = @floatCast(voice_sum_r);
+
+        if (plugin.params.get(.ScaleVoices).Bool) {
+            // Apply scaling to prevent the amplitude to go too crazy
+            const scaling = 1.0 / @max(1, std.math.sqrt(@as(f32, @floatFromInt(voices.getVoiceCount()))));
+            output_l *= scaling;
+            output_r *= scaling;
+        }
+
+        render_payload.data_mutex.lock();
+        defer render_payload.data_mutex.unlock();
+
+        render_payload.output_left[index] += output_l;
+        render_payload.output_right[index] += output_r;
     }
 }
