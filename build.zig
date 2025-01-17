@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
         .wayland = false,
     });
     const zopengl = b.dependency("zopengl", .{});
+    const objc = b.dependency("mach-objc", .{});
 
     const lib = b.addSharedLibrary(
         .{
@@ -81,13 +82,7 @@ pub fn build(b: *std.Build) void {
         pkg.root_module.addOptions("static_data", static_data);
 
         if (builtin.os.tag == .macos) {
-            pkg.addCSourceFiles(.{
-                .files = &.{
-                    "src/ext/gui/metal_helper.m",
-                },
-                .flags = &.{"-fno-objc-arc"},
-            });
-            pkg.linkFramework("QuartzCore");
+            pkg.root_module.addImport("objc", objc.module("mach-objc"));
         }
     }
 

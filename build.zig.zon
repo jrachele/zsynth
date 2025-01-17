@@ -31,9 +31,7 @@
             .url = "git+https://git.sr.ht/~interpunct/clap-zig-bindings#18442a2dc58b8625b9d6d036b0e4bb7ffd031aaf",
             .hash = "12203de46738cb75936cefe6bdd83aaead64c67bd46f8707c981a02a9bf2a695195c",
         },
-        .zgui = .{
-            .path = "zgui/"
-        },
+        .zgui = .{ .path = "zgui/" },
         .zopengl = .{
             .url = "https://github.com/zig-gamedev/zopengl/archive/c9c293a9af388478bca0ad52007a72372ef71747.tar.gz",
             .hash = "1220c030f5e33e09bd80fe7a7b064b65e1fc02e9bbf603ba04716866c9f1ca16f8ce",
@@ -43,9 +41,10 @@
         //     .url = "https://github.com/zig-gamedev/zglfw/archive/4a5ec6186173a6ae4d71ad01b64dac5561ef0b16.tar.gz",
         //     .hash = "1220fb278bcd5f1be0096c841c29de2374806f3980160aa3e409f551b1c242254b74",
         // },
-        .zglfw = .{
-            .path = "zglfw/"
-        }
+        .zglfw = .{ .path = "zglfw/", },
+        .@"mach-objc" = .{
+            .path = "mach-objc/",
+        },
     },
 
     .paths = .{
