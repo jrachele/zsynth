@@ -77,6 +77,7 @@ pub fn build(b: *std.Build) void {
         pkg.root_module.addImport("zglfw", zglfw.module("root"));
         pkg.linkLibrary(zglfw.artifact("glfw"));
         pkg.root_module.addImport("zopengl", zopengl.module("root"));
+        pkg.linkLibrary(zopengl.artifact("zopengl"));
 
         pkg.root_module.addOptions("options", options);
         pkg.root_module.addOptions("static_data", static_data);

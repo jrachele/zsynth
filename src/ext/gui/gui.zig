@@ -10,14 +10,15 @@ const glfw = @import("zglfw");
 const zopengl = @import("zopengl");
 
 const imgui = @import("imgui.zig");
+const metal = @import("metal.zig");
 const Plugin = @import("../../plugin.zig");
 
 const PlatformData = switch (builtin.os.tag) {
     .macos => struct {
         view: *objc.app_kit.View,
-        mach_view: *objc.mach.View,
         device: *objc.metal.Device,
         layer: *objc.quartz_core.MetalLayer,
+        command_queue: *objc.metal.CommandQueue,
     },
     .linux => struct {
         window: *glfw.Window,
@@ -32,10 +33,12 @@ const window_height = 500;
 plugin: *Plugin,
 allocator: std.mem.Allocator,
 
-scale_factor: f32 = 2.0,
+scale_factor: f32 = 1.0,
 platform_data: ?PlatformData,
 imgui_initialized: bool,
 visible: bool,
+width: u32,
+height: u32,
 
 const gl_major = 4;
 const gl_minor = 0;
@@ -61,6 +64,8 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*
         .platform_data = null,
         .visible = true,
         .imgui_initialized = false,
+        .width = window_width,
+        .height = window_height,
     };
 
     return gui;
@@ -78,7 +83,10 @@ pub fn deinit(self: *GUI) void {
 fn initWindow(self: *GUI) !void {
     std.log.debug("Creating window.", .{});
     try imgui.init(self);
-    try self.initPlatform();
+    // Only init GLFW here with the window, other platforms will be inited with setParent()
+    if (builtin.os.tag == .linux) {
+        try self.initGLFW();
+    }
 }
 
 fn deinitWindow(self: *GUI) void {
@@ -96,25 +104,11 @@ fn deinitWindow(self: *GUI) void {
     }
 }
 
-inline fn initPlatform(self: *GUI) !void {
-    switch (builtin.os.tag) {
-        .macos => {
-            try self.initMetal();
-        },
-        .linux => {
-            try self.initGLFW();
-        },
-        else => {
-            // TODO
-        },
-    }
-}
-
 inline fn deinitPlatform(self: *GUI) bool {
     var did_destroy_window = false;
     switch (builtin.os.tag) {
         .macos => {
-            self.deinitMetal();
+            metal.deinit(self);
             // We didn't destroy the window itself, that's handled by the DAW
         },
         .windows => {
@@ -136,6 +130,8 @@ fn initGLFW(self: *GUI) !void {
         return error.PlatformAlreadyInitialized;
     }
 
+    try imgui.init(self);
+
     // Initialize GLFW
     try glfw.init();
     errdefer glfw.terminate();
@@ -148,7 +144,7 @@ fn initGLFW(self: *GUI) !void {
     glfw.windowHint(.doublebuffer, true);
 
     const window_title = "ZSynth";
-    const window = try glfw.Window.create(window_width, window_height, window_title, null);
+    const window = try glfw.Window.create(self.width, self.height, window_title, null);
     errdefer window.destroy();
     window.setSizeLimits(100, 100, -1, -1);
 
@@ -173,29 +169,7 @@ fn deinitGLFW(self: *GUI) void {
     self.platform_data = null;
 }
 
-fn initMetal(self: *GUI) !void {
-    // We need the NSView* from the DAW
-    if (self.platform_data == null) {
-        return error.NoPlatformData;
-    }
-    const data = self.platform_data.?;
-    const view = data.view;
-    const metal_device = data.device;
-
-    zgui.backend.init(view, metal_device);
-    errdefer zgui.backend.deinit();
-}
-
-fn deinitMetal(self: *GUI) void {
-    if (self.platform_data) |data| {
-        data.device.release();
-        data.layer.release();
-    }
-    self.platform_data = null;
-}
-
 pub fn show(self: *GUI) !void {
-    try self.initWindow();
     self.visible = true;
     // Only set on GLFW, otherwise this will be handled by the DAW
     if (builtin.os.tag == .linux) {
@@ -230,7 +204,7 @@ pub fn update(self: *GUI) !void {
                 try self.drawGLFW();
             },
             .macos => {
-                try self.drawMetal();
+                try metal.update(self);
             },
             else => {},
         }
@@ -263,39 +237,6 @@ fn drawGLFW(self: *GUI) !void {
     window.swapBuffers();
 }
 
-fn drawMetal(self: *GUI) !void {
-    if (self.platform_data == null) {
-        return error.PlatformNotInitialized;
-    }
-
-    const data = self.platform_data.?;
-
-    // TODO Find framebuffer size somehow
-    // const fb_size = metal.getFrameBufferSize();
-
-    const width: u32 = window_width;
-    const height: u32 = window_height;
-
-    const descriptor = objc.metal.RenderPassDescriptor.renderPassDescriptor();
-    defer descriptor.release();
-
-    const command_queue = data.device.newCommandQueue().?;
-    defer command_queue.release();
-
-    const command_buffer = command_queue.commandBuffer().?;
-    defer command_buffer.release();
-
-    const command_encoder = command_buffer.renderCommandEncoderWithDescriptor(descriptor).?;
-    defer command_encoder.release();
-
-    zgui.backend.newFrame(width, height, data.view, descriptor);
-    imgui.draw(self);
-    zgui.backend.draw(command_buffer, command_encoder);
-    command_buffer.presentDrawable(data.mach_view.currentDrawable().?.as(objc.metal.Drawable));
-    command_buffer.commit();
-    command_buffer.waitUntilCompleted();
-}
-
 fn setTitle(self: *GUI, title: [:0]const u8) void {
     switch (builtin.os.tag) {
         .macos => {},
@@ -309,19 +250,7 @@ fn setTitle(self: *GUI, title: [:0]const u8) void {
 }
 
 fn getSize(self: *const GUI) [2]u32 {
-    switch (builtin.os.tag) {
-        .macos => {},
-        .linux => {
-            if (self.platform_data) |data| {
-                const size = data.window.getSize();
-                return [2]u32{ @intCast(size[0]), @intCast(size[1]) };
-            }
-        },
-        else => {},
-    }
-
-    // Assume default
-    return [2]u32{ window_width, window_height };
+    return [2]u32{ self.width, self.height };
 }
 
 // Clap specific stuff
@@ -446,26 +375,10 @@ fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gu
         switch (builtin.os.tag) {
             .macos => {
                 const view: *objc.app_kit.View = @ptrCast(plugin_window.data.cocoa);
-                const device = objc.metal.createSystemDefaultDevice().?;
-                var layer = objc.quartz_core.MetalLayer.allocInit();
-                var mach_view = objc.mach.View.alloc();
-                const frame = objc.app_kit.Rect{ .origin = .{
-                    .x = 0,
-                    .y = 0,
-                }, .size = .{
-                    .width = window_width,
-                    .height = window_height,
-                } };
 
-                mach_view = mach_view.initWithFrame(frame);
-                mach_view.setLayer(layer);
-                view.addSubView(mach_view.as(objc.app_kit.View));
-                layer.setDevice(device);
-                gui.platform_data = .{
-                    .view = view,
-                    .mach_view = mach_view,
-                    .device = device,
-                    .layer = layer,
+                metal.init(gui, view) catch |err| {
+                    std.log.err("Error initializing metal! {}", .{err});
+                    return false;
                 };
                 return true;
             },

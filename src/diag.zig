@@ -1,6 +1,9 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
 
+const glfw = @import("zglfw");
+const objc = @import("objc");
 const Plugin = @import("plugin.zig");
 const GUI = @import("ext/gui/gui.zig");
 
@@ -78,10 +81,27 @@ pub fn main() !void {
 
     host.setPlugin(plugin);
 
-    var gui = try GUI.init(allocator, plugin, true);
-    defer gui.deinit();
+    const plugin_gui_ext = GUI.create();
 
-    while (gui.shouldUpdate()) {
-        try gui.update();
+    switch (builtin.os.tag) {
+        .macos => {
+            // For macOS testing, we'll act like the "host" and create a window using GLFW
+            try glfw.init();
+            const glfw_window = try glfw.createWindow(800, 500, "ZSynth", null);
+            defer glfw_window.destroy();
+            const nswindow: *objc.app_kit.Window = @ptrCast(glfw.getCocoaWindow(glfw_window));
+            _ = plugin_gui_ext.create(&plugin.plugin, null, false);
+            const window = clap.ext.gui.Window{ .api = "cocoa", .data = .{
+                .cocoa = nswindow.contentView().?,
+            } };
+            _ = plugin_gui_ext.setParent(&plugin.plugin, &window);
+            glfw_window.show();
+            while (plugin.gui) |gui| {
+                try gui.update();
+            }
+        },
+        else => {
+            // TODO
+        },
     }
 }
