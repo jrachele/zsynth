@@ -81,7 +81,7 @@ pub fn main() !void {
     var gui = try GUI.init(allocator, plugin, true);
     defer gui.deinit();
 
-    while (gui.window != null) {
-        gui.update();
+    while (gui.shouldUpdate()) {
+        try gui.update();
     }
 }

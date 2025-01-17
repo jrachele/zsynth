@@ -24,7 +24,11 @@ pub fn build(b: *std.Build) void {
     const zgui = b.dependency("zgui", .{
         .shared = false,
         .with_implot = true,
-        .backend = .glfw_opengl3,
+        .backend = switch (builtin.os.tag) {
+            .macos => .osx_metal,
+            .windows => .win32_dx12,
+            else => .glfw_opengl3,
+        },
     });
     const zglfw = b.dependency("zglfw", .{
         .shared = false,
@@ -79,10 +83,11 @@ pub fn build(b: *std.Build) void {
         if (builtin.os.tag == .macos) {
             pkg.addCSourceFiles(.{
                 .files = &.{
-                    "src/ext/gui/cocoa_helper.m",
+                    "src/ext/gui/metal_helper.m",
                 },
-                .flags = &.{},
+                .flags = &.{"-fno-objc-arc"},
             });
+            pkg.linkFramework("QuartzCore");
         }
     }
 

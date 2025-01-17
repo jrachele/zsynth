@@ -313,6 +313,8 @@ fn _onMainThread(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
     // Update the GUI if exists
     if (plugin.gui) |gui| {
-        gui.update();
+        gui.update() catch |err| {
+            std.log.err("Error occurred during GUI update loop: {}", .{err});
+        };
     }
 }

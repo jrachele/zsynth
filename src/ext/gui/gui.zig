@@ -13,13 +13,6 @@ const zopengl = @import("zopengl");
 const Plugin = @import("../../plugin.zig");
 const Params = @import("../params.zig");
 
-const platform_gui = switch (builtin.os.tag) {
-    .macos => @import("cocoa.zig"),
-    _ => .{},
-};
-
-const cocoa = @import("cocoa.zig");
-
 const audio = @import("../../audio/audio.zig");
 const waves = @import("../../audio/waves.zig");
 const voices = @import("../../audio/voices.zig");
@@ -27,12 +20,31 @@ const Voice = voices.Voice;
 const Wave = waves.Wave;
 const Filter = Params.Filter;
 
+const PlatformData = switch (builtin.os.tag) {
+    .macos => struct {
+        view: *const anyopaque, // NSView*
+        device: *const anyopaque, // MTLDevice*
+        layer: *const anyopaque, // CAMetalLayer*
+    },
+    .linux => struct {
+        window: *glfw.Window,
+    },
+    .windows => struct {},
+    else => struct {},
+};
+
+const metal = @import("metal.zig");
+
+const window_width = 800;
+const window_height = 500;
+
 plugin: *Plugin,
 allocator: std.mem.Allocator,
 
-window: ?*glfw.Window,
-is_floating: bool,
-daw_window: ?*const clap.ext.gui.Window,
+scale_factor: f32 = 2.0,
+platform_data: ?PlatformData,
+imgui_initialized: bool,
+visible: bool,
 
 const gl_major = 4;
 const gl_minor = 0;
@@ -45,41 +57,93 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*
         return error.AlreadyInitialized;
     }
 
+    if (is_floating and builtin.os.tag != .linux) {
+        std.log.err("Floating windows are only supported on Linux!", .{});
+        return error.FloatingWindowNotSupported;
+    }
+
     const gui = try allocator.create(GUI);
     errdefer allocator.destroy(gui);
     gui.* = .{
         .plugin = plugin,
         .allocator = allocator,
-        .is_floating = is_floating,
-        .window = null,
-        .daw_window = null,
+        .platform_data = null,
+        .visible = true,
+        .imgui_initialized = false,
     };
-
-    try gui.createWindow();
 
     return gui;
 }
 
 pub fn deinit(self: *GUI) void {
     std.log.debug("GUI deinit() called", .{});
-    if (self.window != null) {
-        self.destroyWindow();
+    if (self.platform_data != null) {
+        self.deinitWindow();
     }
     self.plugin.gui = null;
     self.allocator.destroy(self);
 }
 
-fn createWindow(self: *GUI) !void {
+fn initWindow(self: *GUI) !void {
     std.log.debug("Creating window.", .{});
-    if (self.window != null) {
-        std.log.err("Window already created! Ignoring...", .{});
-        return error.WindowAlreadyCreated;
+    try self.initImGui();
+    try self.initPlatform();
+}
+
+fn deinitWindow(self: *GUI) void {
+    std.log.debug("Destroying window.", .{});
+
+    var windowWasDestroyed = false;
+    if (self.platform_data != null) {
+        self.deinitImGui();
+        windowWasDestroyed = self.deinitPlatform();
     }
 
-    // Initialize ImGui
-    zgui.init(self.plugin.allocator);
-    errdefer zgui.deinit();
-    zgui.io.setIniFilename(null);
+    if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
+        var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
+        gui_host.closed(self.plugin.host, windowWasDestroyed);
+    }
+}
+
+inline fn initPlatform(self: *GUI) !void {
+    switch (builtin.os.tag) {
+        .macos => {
+            try self.initMetal();
+        },
+        .linux => {
+            try self.initGLFW();
+        },
+        else => {
+            // TODO
+        },
+    }
+}
+
+inline fn deinitPlatform(self: *GUI) bool {
+    var did_destroy_window = false;
+    switch (builtin.os.tag) {
+        .macos => {
+            self.deinitMetal();
+            // We didn't destroy the window itself, that's handled by the DAW
+        },
+        .windows => {
+            // TODO
+        },
+        .linux => {
+            self.deinitGLFW();
+            did_destroy_window = true;
+        },
+        else => {},
+    }
+
+    return did_destroy_window;
+}
+
+fn initGLFW(self: *GUI) !void {
+    if (self.platform_data != null) {
+        std.log.err("Platform already initialized!", .{});
+        return error.PlatformAlreadyInitialized;
+    }
 
     // Initialize GLFW
     try glfw.init();
@@ -91,10 +155,9 @@ fn createWindow(self: *GUI) !void {
     glfw.windowHint(.opengl_forward_compat, true);
     glfw.windowHint(.client_api, .opengl_api);
     glfw.windowHint(.doublebuffer, true);
-    glfw.windowHint(.visible, self.is_floating);
 
     const window_title = "ZSynth";
-    const window = try glfw.Window.create(800, 500, window_title, null);
+    const window = try glfw.Window.create(window_width, window_height, window_title, null);
     errdefer window.destroy();
     window.setSizeLimits(100, 100, -1, -1);
 
@@ -103,82 +166,120 @@ fn createWindow(self: *GUI) !void {
 
     try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
 
-    const scale_factor = scale_factor: {
-        const scale = window.getContentScale();
-        break :scale_factor @max(scale[0], scale[1]);
-    };
-    _ = zgui.io.addFontFromMemory(static_data.font, std.math.floor(16.0 * scale_factor));
-
-    zgui.getStyle().scaleAllSizes(scale_factor);
     zgui.backend.init(window);
-    zgui.plot.init();
+    errdefer zgui.backend.deinit();
 
-    if (builtin.os.tag == .macos) {
-        // Hiding the dock by setting the activation policy to accessory prevents a strange focus loss bug
-        // https://github.com/glfw/glfw/issues/1766
-        // https://old.reddit.com/r/MacOS/comments/1fmmqj7/severe_focus_loss_bug_still_not_fixed_in_macos/
-        platform_gui.hideDock();
-    }
-
-    self.window = window;
+    self.platform_data = .{
+        .window = window,
+    };
 }
 
-fn destroyWindow(self: *GUI) void {
-    std.log.debug("Destroying window.", .{});
-
-    var windowWasDestroyed = false;
-    if (self.window) |window| {
-        zgui.plot.deinit();
-        zgui.backend.deinit();
-        zgui.deinit();
-        window.destroy();
-        // glfw.terminate();
-        windowWasDestroyed = true;
+fn deinitGLFW(self: *GUI) void {
+    if (self.platform_data) |data| {
+        data.window.destroy();
+        glfw.terminate();
     }
-    self.window = null;
+    self.platform_data = null;
+}
 
-    if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
-        var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
-        gui_host.closed(self.plugin.host, windowWasDestroyed);
+fn initMetal(self: *GUI) !void {
+    // We need the NSView* from the DAW
+    if (self.platform_data == null) {
+        return error.NoPlatformData;
     }
+    const data = self.platform_data.?;
+    const view = data.view;
+    const metal_device = data.device;
+
+    zgui.backend.init(view, metal_device);
+    errdefer zgui.backend.deinit();
+}
+
+fn deinitMetal(self: *GUI) void {
+    if (self.platform_data) |data| {
+        metal.deinitMetalDevice(data.device);
+        metal.deinitMetalLayer(data.layer, data.view);
+    }
+    self.platform_data = null;
+}
+
+fn initImGui(self: *GUI) !void {
+    if (self.imgui_initialized) {
+        std.log.err("ImGui already initialized! Ignoring", .{});
+        return error.ImGuiAlreadyInitialized;
+    }
+
+    // Initialize ImGui
+    zgui.init(self.plugin.allocator);
+    zgui.io.setIniFilename(null);
+
+    _ = zgui.io.addFontFromMemory(static_data.font, std.math.floor(16.0 * self.scale_factor));
+
+    zgui.getStyle().scaleAllSizes(self.scale_factor);
+    zgui.plot.init();
+
+    self.imgui_initialized = true;
+}
+
+fn deinitImGui(self: *GUI) void {
+    zgui.plot.deinit();
+    zgui.backend.deinit();
+    zgui.deinit();
+    self.imgui_initialized = false;
 }
 
 pub fn show(self: *GUI) !void {
-    // Create the window if it doesn't exist
-    if (self.window == null) {
-        try self.createWindow();
-    }
-
-    if (self.window) |window| {
-        window.setAttribute(.visible, true);
+    try self.initWindow();
+    self.visible = true;
+    // Only set on GLFW, otherwise this will be handled by the DAW
+    if (builtin.os.tag == .linux) {
+        if (self.platform_data) |data| {
+            data.window.setAttribute(.visible, true);
+        }
     }
 }
 
 pub fn hide(self: *GUI) void {
-    if (self.window) |window| {
-        window.setAttribute(.visible, false);
-    }
-}
-
-pub fn update(self: *GUI) void {
-    if (self.window) |window| {
-        if (window.shouldClose()) {
-            std.log.info("Window requested close, closing!", .{});
-            self.destroyWindow();
-            return;
+    self.visible = false;
+    if (builtin.os.tag == .linux) {
+        if (self.platform_data) |data| {
+            data.window.setAttribute(.visible, true);
         }
-        _ = self.draw();
     }
 }
 
-fn draw(self: *GUI) bool {
-    if (self.window == null) return false;
+pub fn shouldUpdate(self: *const GUI) bool {
+    return self.visible and self.platform_data != null;
+}
 
-    var window = self.window.?;
+pub fn update(self: *GUI) !void {
+    if (self.platform_data) |data| {
+        switch (builtin.os.tag) {
+            .linux => {
+                if (data.window.shouldClose()) {
+                    std.log.info("Window requested close, closing!", .{});
+                    self.deinitWindow();
+                    return;
+                }
+                try self.drawGLFW();
+            },
+            .macos => {
+                try self.drawMetal();
+            },
+            else => {},
+        }
+    }
+}
+
+fn drawGLFW(self: *GUI) !void {
+    if (self.platform_data == null) {
+        return error.PlatformNotInitialized;
+    }
+
+    var window = self.platform_data.?.window;
     if (window.getKey(.escape) == .press) {
         glfw.setWindowShouldClose(window, true);
-        // window.setShouldClose(true);
-        return false;
+        return;
     }
 
     const gl = zopengl.bindings;
@@ -190,7 +291,46 @@ fn draw(self: *GUI) bool {
     const fb_size = window.getFramebufferSize();
 
     zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
+    self.drawImGui();
+    zgui.backend.draw();
 
+    window.swapBuffers();
+}
+
+fn drawMetal(self: *GUI) !void {
+    if (self.platform_data == null) {
+        return error.PlatformNotInitialized;
+    }
+
+    const data = self.platform_data.?;
+
+    // TODO Find framebuffer size somehow
+    // const fb_size = metal.getFrameBufferSize();
+
+    const width: u32 = window_width;
+    const height: u32 = window_height;
+
+    const descriptor = metal.initRenderPassDescriptor();
+    defer metal.deinitRenderPassDescriptor(descriptor);
+
+    const command_queue = metal.initCommandQueue(data.device);
+    defer metal.deinitCommandQueue(command_queue);
+
+    const command_buffer = metal.initCommandBuffer(command_queue);
+    defer metal.deinitCommandBuffer(command_buffer);
+
+    const command_encoder = metal.initCommandEncoder(command_buffer, descriptor);
+    defer metal.deinitCommandEncoder(command_encoder);
+
+    zgui.backend.newFrame(width, height, data.view, descriptor);
+    self.drawImGui();
+    zgui.backend.draw(command_buffer, command_encoder);
+
+    metal.present(command_buffer, data.view);
+}
+
+// Platform-agnostic draw function
+fn drawImGui(self: *GUI) void {
     zgui.setNextWindowPos(.{ .x = 0, .y = 0, .cond = .always });
     const display_size = zgui.io.getDisplaySize();
     zgui.setNextWindowSize(.{ .w = display_size[0], .h = display_size[1], .cond = .always });
@@ -208,8 +348,7 @@ fn draw(self: *GUI) bool {
         },
     )) {
         zgui.text("ZSynth by juge", .{});
-        // TODO: calculate and right align this properly if this design is to persist
-        zgui.sameLine(.{ .spacing = display_size[0] - 190 });
+        zgui.sameLine(.{});
         zgui.text("Voices: {} / {}", .{ self.plugin.voices.getVoiceCount(), self.plugin.voices.getVoiceCapacity() });
 
         {
@@ -369,12 +508,6 @@ fn draw(self: *GUI) bool {
         }
     }
     zgui.end();
-
-    zgui.backend.draw();
-
-    window.swapBuffers();
-
-    return true;
 }
 
 fn renderParam(self: *GUI, param: Params.Parameter) void {
@@ -550,17 +683,31 @@ fn renderMix(self: *GUI, osc1: bool) void {
 }
 
 fn setTitle(self: *GUI, title: [:0]const u8) void {
-    if (self.window) |window| {
-        window.setTitle(title);
+    switch (builtin.os.tag) {
+        .macos => {},
+        .linux => {
+            if (self.platform_data) |data| {
+                data.window.setTitle(title);
+            }
+        },
+        else => {},
     }
 }
 
 fn getSize(self: *const GUI) [2]u32 {
-    if (self.window) |window| {
-        const size = window.getSize();
-        return [2]u32{ @intCast(size[0]), @intCast(size[1]) };
+    switch (builtin.os.tag) {
+        .macos => {},
+        .linux => {
+            if (self.platform_data) |data| {
+                const size = data.window.getSize();
+                return [2]u32{ @intCast(size[0]), @intCast(size[1]) };
+            }
+        },
+        else => {},
     }
-    return [2]u32{ 0, 0 };
+
+    // Assume default
+    return [2]u32{ window_width, window_height };
 }
 
 // Clap specific stuff
@@ -584,15 +731,18 @@ pub fn create() clap.ext.gui.Plugin {
     };
 }
 
-fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, _: bool) callconv(.C) bool {
+fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, is_floating: bool) callconv(.C) bool {
+    if (is_floating) return builtin.os.tag == .linux;
     return true;
 }
 /// returns true if the plugin has a preferred api. the host has no obligation to honor the plugin's preference,
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
 /// not copied.
 fn _getPreferredApi(_: *const clap.Plugin, _: *[*:0]const u8, is_floating: *bool) callconv(.C) bool {
-    // _ = is_floating;
-    is_floating.* = true;
+    // We only support floating windows on Linux for the time being
+    // I don't see how this can change given we can only have 1 ImGui backend at a time with ZGui
+    // I could make a PR to change that but I am fine with this for now
+    is_floating.* = builtin.os.tag == .linux;
     return true;
 }
 /// create and allocate all resources needed for the gui.
@@ -630,8 +780,11 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 /// to work out the saling factor itself by quering the os directly, then ignore
 /// the call. scale of 2 means 200% scaling. returns true when scaling could be
 /// applied. returns false when the call was ignored or scaling was not applied.
-fn _setScale(_: *const clap.Plugin, scale: f64) callconv(.C) bool {
-    _ = scale;
+fn _setScale(clap_plugin: *const clap.Plugin, scale: f64) callconv(.C) bool {
+    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    if (plugin.gui) |gui| {
+        gui.scale_factor = @floatCast(scale);
+    }
     return true;
 }
 /// get the current size of the plugin gui. `Plugin.create` must have been called prior to
@@ -676,30 +829,26 @@ fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
 fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gui.Window) callconv(.C) bool {
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
     if (plugin.gui) |gui| {
-        gui.daw_window = plugin_window;
-        if (gui.window) |window| {
-            switch (builtin.os.tag) {
-                .macos => {
-                    if (glfw.getCocoaWindow(window)) |cocoa_window| {
-                        platform_gui.setParent(cocoa_window, plugin_window.data.cocoa);
-                        return true;
-                    }
-                },
-                else => {
-                    return false;
-                },
-            }
+        switch (builtin.os.tag) {
+            .macos => {
+                const view = plugin_window.data.cocoa;
+                const device = metal.initMetalDevice();
+                const layer = metal.initMetalLayer(device, view);
+                gui.platform_data = .{
+                    .view = view,
+                    .device = device,
+                    .layer = layer,
+                };
+                return true;
+            },
+            else => {},
         }
     }
 
     return false;
 }
 /// sets the plugin window to stay above the given window. returns true on success.
-fn _setTransient(clap_plugin: *const clap.Plugin, window: *const clap.ext.gui.Window) callconv(.C) bool {
-    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
-    if (plugin.gui) |gui| {
-        gui.daw_window = window;
-    }
+fn _setTransient(_: *const clap.Plugin, _: *const clap.ext.gui.Window) callconv(.C) bool {
     return true;
 }
 /// suggests a window title. only for floating windows.
