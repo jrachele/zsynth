@@ -92,36 +92,31 @@ fn initWindow(self: *GUI) !void {
 fn deinitWindow(self: *GUI) void {
     std.log.debug("Destroying window.", .{});
 
-    var windowWasDestroyed = false;
     if (self.platform_data != null) {
         imgui.deinit(self);
-        windowWasDestroyed = self.deinitPlatform();
+        self.deinitPlatform();
     }
 
-    if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
-        var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
-        gui_host.closed(self.plugin.host, windowWasDestroyed);
-    }
+    // I'm not sure if this is necessary, and on REAPER this keeps resulting in a crash no matter what
+    // if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
+    //     var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
+    //     gui_host.closed(self.plugin.host, true);
+    // }
 }
 
-inline fn deinitPlatform(self: *GUI) bool {
-    var did_destroy_window = false;
+inline fn deinitPlatform(self: *GUI) void {
     switch (builtin.os.tag) {
         .macos => {
             metal.deinit(self);
-            // We didn't destroy the window itself, that's handled by the DAW
         },
         .windows => {
             // TODO
         },
         .linux => {
             self.deinitGLFW();
-            did_destroy_window = true;
         },
         else => {},
     }
-
-    return did_destroy_window;
 }
 
 fn initGLFW(self: *GUI) !void {
@@ -319,12 +314,8 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 /// to work out the saling factor itself by quering the os directly, then ignore
 /// the call. scale of 2 means 200% scaling. returns true when scaling could be
 /// applied. returns false when the call was ignored or scaling was not applied.
-fn _setScale(clap_plugin: *const clap.Plugin, scale: f64) callconv(.C) bool {
-    const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
-    if (plugin.gui) |gui| {
-        gui.scale_factor = @floatCast(scale);
-    }
-    return true;
+fn _setScale(_: *const clap.Plugin, _: f64) callconv(.C) bool {
+    return false;
 }
 /// get the current size of the plugin gui. `Plugin.create` must have been called prior to
 /// asking for the size. returns true and populates `width.*` and `height.*` if the plugin

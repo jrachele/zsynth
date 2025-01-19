@@ -32,7 +32,7 @@ pub inline fn generateWaveTable() WaveTable {
 
     inline for (std.meta.fields(Wave)) |field| {
         const waveshape_type: Wave = @enumFromInt(field.value);
-        const waveshape_index: usize = @intCast(field.value - 1);
+        const waveshape_index: usize = @intCast(field.value);
         if (!@inComptime()) {
             std.log.debug("Generating data for wave type: {}", .{waveshape_type});
         }
@@ -55,11 +55,11 @@ pub inline fn generateWaveTable() WaveTable {
     return table;
 }
 
-pub const Wave = enum(u32) {
-    Sine = 1,
-    Saw = 2,
-    Triangle = 3,
-    Square = 4,
+pub const Wave = enum {
+    Sine,
+    Saw,
+    Triangle,
+    Square,
 };
 
 pub inline fn getFrequency(key: f64) f64 {
@@ -111,7 +111,7 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
     const frequency = getFrequency(key);
 
     const table_index: usize = @intFromFloat(key / half_steps_per_table);
-    const waveshape_index: usize = @intFromEnum(wave_type) - 1;
+    const waveshape_index: usize = @intFromEnum(wave_type);
     const sample_data = &wave_table[waveshape_index][table_index];
 
     const phase: f64 = @mod((frequency / sample_rate) * frames, 1.0);

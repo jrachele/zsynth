@@ -557,13 +557,13 @@ pub fn _valueToText(
         // Wave shapes
         Parameter.WaveShape1, Parameter.WaveShape2 => {
             const intValue: u32 = @intFromFloat(value);
-            const wave: Wave = @enumFromInt(intValue);
+            const wave = std.meta.intToEnum(Wave, intValue) catch return false;
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(wave)}) catch return false;
         },
         // Filter
         Parameter.FilterType => {
             const intValue: u32 = @intFromFloat(value);
-            const filter: Filter = @enumFromInt(intValue);
+            const filter = std.meta.intToEnum(Filter, intValue) catch return false;
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(filter)}) catch return false;
         },
         // Boolean parameters

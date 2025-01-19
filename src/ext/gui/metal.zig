@@ -35,9 +35,11 @@ const WindowDelegate = opaque {
     );
 };
 
-pub fn windowShouldClose(block: *objc.foundation.BlockLiteral(*GUI)) callconv(.C) bool {
-    const gui: *GUI = block.context;
-    gui.deinit();
+pub fn windowShouldClose(block: *objc.foundation.BlockLiteral(*Plugin)) callconv(.C) bool {
+    const plugin: *Plugin = block.context;
+    if (plugin.gui) |gui| {
+        gui.deinit();
+    }
     return true;
 }
 
@@ -51,7 +53,7 @@ pub fn init(gui: *GUI, view: *objc.app_kit.View) !void {
     const window_delegate = WindowDelegate.allocInit();
     var window_should_close = objc.foundation.stackBlockLiteral(
         windowShouldClose,
-        gui,
+        gui.plugin, // Pass the plugin here as the GUI may be outlived
         null,
         null,
     );
