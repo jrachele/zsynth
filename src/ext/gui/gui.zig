@@ -33,7 +33,7 @@ const window_height = 500;
 plugin: *Plugin,
 allocator: std.mem.Allocator,
 
-scale_factor: f32 = 1.0,
+scale_factor: f32 = 2.0,
 platform_data: ?PlatformData,
 imgui_initialized: bool,
 visible: bool,
@@ -169,48 +169,6 @@ fn deinitGLFW(self: *GUI) void {
     self.platform_data = null;
 }
 
-pub fn show(self: *GUI) !void {
-    self.visible = true;
-    // Only set on GLFW, otherwise this will be handled by the DAW
-    if (builtin.os.tag == .linux) {
-        if (self.platform_data) |data| {
-            data.window.setAttribute(.visible, true);
-        }
-    }
-}
-
-pub fn hide(self: *GUI) void {
-    self.visible = false;
-    if (builtin.os.tag == .linux) {
-        if (self.platform_data) |data| {
-            data.window.setAttribute(.visible, true);
-        }
-    }
-}
-
-pub fn shouldUpdate(self: *const GUI) bool {
-    return self.visible and self.platform_data != null;
-}
-
-pub fn update(self: *GUI) !void {
-    if (self.platform_data) |data| {
-        switch (builtin.os.tag) {
-            .linux => {
-                if (data.window.shouldClose()) {
-                    std.log.info("Window requested close, closing!", .{});
-                    self.deinitWindow();
-                    return;
-                }
-                try self.drawGLFW();
-            },
-            .macos => {
-                try metal.update(self);
-            },
-            else => {},
-        }
-    }
-}
-
 fn drawGLFW(self: *GUI) !void {
     if (self.platform_data == null) {
         return error.PlatformNotInitialized;
@@ -235,6 +193,44 @@ fn drawGLFW(self: *GUI) !void {
     zgui.backend.draw();
 
     window.swapBuffers();
+}
+
+pub fn show(self: *GUI) !void {
+    self.visible = true;
+    // Only set on GLFW, otherwise this will be handled by the DAW
+    if (builtin.os.tag == .linux) {
+        if (self.platform_data) |data| {
+            data.window.setAttribute(.visible, true);
+        }
+    }
+}
+
+pub fn hide(self: *GUI) void {
+    self.visible = false;
+    if (builtin.os.tag == .linux) {
+        if (self.platform_data) |data| {
+            data.window.setAttribute(.visible, true);
+        }
+    }
+}
+
+pub fn update(self: *GUI) !void {
+    if (self.platform_data) |data| {
+        switch (builtin.os.tag) {
+            .linux => {
+                if (data.window.shouldClose()) {
+                    std.log.info("Window requested close, closing!", .{});
+                    self.deinitWindow();
+                    return;
+                }
+                try self.drawGLFW();
+            },
+            .macos => {
+                try metal.update(self.plugin);
+            },
+            else => {},
+        }
+    }
 }
 
 fn setTitle(self: *GUI, title: [:0]const u8) void {
