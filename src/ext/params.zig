@@ -4,8 +4,9 @@ const builtin = @import("builtin");
 const std = @import("std");
 const clap = @import("clap-bindings");
 const regex = @import("regex");
-const Plugin = @import("../plugin.zig");
+const tracy = @import("tracy");
 
+const Plugin = @import("../plugin.zig");
 const Wave = @import("../audio/waves.zig").Wave;
 
 pub const Filter = enum {
@@ -520,6 +521,10 @@ pub fn _valueToText(
     out_buffer: [*]u8,
     out_buffer_capacity: u32,
 ) callconv(.C) bool {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Value to Text" });
+    defer zone.deinit();
+
     const out_buf = out_buffer[0..out_buffer_capacity];
 
     const index: usize = @intFromEnum(id);
@@ -594,6 +599,10 @@ fn _textToValue(
     value_text: [*:0]const u8,
     out_value: *f64,
 ) callconv(.C) bool {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Text to Value" });
+    defer zone.deinit();
+
     const plugin = Plugin.fromClapPlugin(clap_plugin);
     const index: usize = @intFromEnum(id);
     const param_type: Parameter = @enumFromInt(index);
@@ -731,6 +740,10 @@ pub fn _flush(
     input_events: *const clap.events.InputEvents,
     output_events: *const clap.events.OutputEvents,
 ) callconv(.C) void {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Flush parameters" });
+    defer zone.deinit();
+
     const plugin = Plugin.fromClapPlugin(clap_plugin);
     var params_did_change = false;
     for (0..input_events.size(input_events)) |i| {

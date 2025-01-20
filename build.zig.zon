@@ -45,6 +45,9 @@
         .@"mach-objc" = .{
             .path = "mach-objc/",
         },
+        .tracy = .{
+            .path = "zig-tracy/",
+        }
     },
 
     .paths = .{

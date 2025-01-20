@@ -2,6 +2,7 @@ const GUI = @This();
 
 const builtin = @import("builtin");
 const std = @import("std");
+const tracy = @import("tracy");
 
 const clap = @import("clap-bindings");
 const objc = @import("objc");
@@ -80,6 +81,10 @@ pub fn deinit(self: *GUI) void {
 }
 
 pub fn update(self: *GUI) !void {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "GUI update" });
+    defer zone.deinit();
+
     switch (builtin.os.tag) {
         .linux => {
             try linux.update(self.plugin);

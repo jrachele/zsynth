@@ -1,4 +1,5 @@
 const std = @import("std");
+const tracy = @import("tracy");
 
 // TODO: Eventually implement wave tables for each sample
 const SampleRate = i32;
@@ -73,6 +74,10 @@ inline fn getSample(sample_data: []const f64, index: usize) f64 {
 
 // Cubic interpolation using Catmull-Rom spline
 inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Cubic interpolation" });
+    defer zone.deinit();
+
     var index: usize = @intFromFloat(@floor(index_f));
     const frac = index_f - @floor(index_f);
 
@@ -98,6 +103,10 @@ inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
 }
 
 pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: f64, frames: f64) f64 {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Wavetable get with interp" });
+    defer zone.deinit();
+
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
         return 0;
@@ -108,6 +117,8 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
         return 0;
     }
 
+    tracy.frameMark();
+    const table_indexing = tracy.initZone(@src(), .{ .name = "Table indexing" });
     const frequency = getFrequency(key);
 
     const table_index: usize = @intFromFloat(key / half_steps_per_table);
@@ -120,6 +131,8 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
     const index_f: f64 = @mod(period_length * phase, period_length); // Mod it just incase phase was exactly 1.00
     const index_l: usize = @intFromFloat(std.math.floor(index_f));
     const index_r: usize = @mod(@as(usize, @intFromFloat(std.math.ceil(index_f))), sample_count);
+
+    table_indexing.deinit();
 
     // If our index was an integer value to begin with, no need to interpolate
     if (index_l == index_r) {

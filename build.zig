@@ -14,7 +14,19 @@ pub fn build(b: *std.Build) void {
     const wait_for_debugger = b.option(
         bool,
         "wait_for_debugger",
-        "Stall when creating a plugin from the factory until a debugger mutates wait variable",
+        "Stall when creating a plugin from the factory",
+    ) orelse false;
+
+    const profiling = b.option(
+        bool,
+        "profiling",
+        "Enable profiling with tracy. Profiling is enabled by default in debug builds, but not in release builds.",
+    ) orelse false;
+
+    const disable_profiling = b.option(
+        bool,
+        "disable_profiling",
+        "Disable profiling. This will override the enable profiling flag",
     ) orelse false;
 
     const target = b.standardTargetOptions(.{});
@@ -37,6 +49,10 @@ pub fn build(b: *std.Build) void {
     });
     const zopengl = b.dependency("zopengl", .{});
     const objc = b.dependency("mach-objc", .{});
+
+    const tracy = b.dependency("tracy", .{
+        .tracy_enable = (builtin.mode == .Debug or profiling) and !disable_profiling,
+    });
 
     const lib = b.addSharedLibrary(
         .{
@@ -71,13 +87,18 @@ pub fn build(b: *std.Build) void {
         pkg.root_module.addImport("clap-bindings", clap_bindings.module("clap-bindings"));
         pkg.root_module.addImport("regex", regex.module("regex"));
 
-        // GUI Related pkgraries
+        // GUI Related libraries
         pkg.root_module.addImport("zgui", zgui.module("root"));
         pkg.linkLibrary(zgui.artifact("imgui"));
         pkg.root_module.addImport("zglfw", zglfw.module("root"));
         pkg.linkLibrary(zglfw.artifact("glfw"));
         pkg.root_module.addImport("zopengl", zopengl.module("root"));
         pkg.linkLibrary(zopengl.artifact("zopengl"));
+
+        // Profiling
+        pkg.root_module.addImport("tracy", tracy.module("tracy"));
+        pkg.linkLibrary(tracy.artifact("tracy"));
+        pkg.linkLibCpp();
 
         pkg.root_module.addOptions("options", options);
         pkg.root_module.addOptions("static_data", static_data);

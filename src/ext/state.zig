@@ -1,5 +1,6 @@
 const clap = @import("clap-bindings");
 const std = @import("std");
+const tracy = @import("tracy");
 
 const Params = @import("params.zig");
 const Plugin = @import("../plugin.zig");
@@ -13,6 +14,10 @@ pub fn create() clap.ext.state.Plugin {
 
 // Frankly shocking how nice Zig makes this
 fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Saving plugin state" });
+    defer zone.deinit();
+
     std.log.debug("Saving plugin state...", .{});
     const plugin = Plugin.fromClapPlugin(clap_plugin);
 
@@ -43,6 +48,10 @@ fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(
 }
 
 fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
+    tracy.frameMark();
+    const zone = tracy.initZone(@src(), .{ .name = "Loading plugin state" });
+    defer zone.deinit();
+
     std.log.debug("State._load called from plugin host", .{});
     const plugin = Plugin.fromClapPlugin(clap_plugin);
 
@@ -73,7 +82,7 @@ fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(
     const params = createParamsFromBuffer(plugin.allocator, param_data_buf.items);
     if (params == null) {
         std.log.err("Unable to create params from the active state buffer! {s}", .{param_data_buf.items});
-        return false;
+        return true;
     }
 
     // Mutate the overall plugin params now that they are properly loaded
