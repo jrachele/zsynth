@@ -90,12 +90,18 @@ pub fn main() !void {
             const glfw_window = try glfw.createWindow(800, 500, "ZSynth", null);
             defer glfw_window.destroy();
             const nswindow: *objc.app_kit.Window = @ptrCast(glfw.getCocoaWindow(glfw_window));
-            _ = plugin_gui_ext.create(&plugin.plugin, null, false);
             const window = clap.ext.gui.Window{ .api = "cocoa", .data = .{
                 .cocoa = nswindow.contentView().?,
             } };
+            _ = plugin_gui_ext.create(&plugin.plugin, null, false);
             _ = plugin_gui_ext.setParent(&plugin.plugin, &window);
             glfw_window.show();
+            while (plugin.gui) |gui| {
+                try gui.update();
+            }
+        },
+        .linux => {
+            _ = plugin_gui_ext.create(&plugin.plugin, null, true);
             while (plugin.gui) |gui| {
                 try gui.update();
             }

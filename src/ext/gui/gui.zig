@@ -2,15 +2,15 @@ const GUI = @This();
 
 const builtin = @import("builtin");
 const std = @import("std");
+
 const clap = @import("clap-bindings");
 const objc = @import("objc");
-
-const zgui = @import("zgui");
 const glfw = @import("zglfw");
-const zopengl = @import("zopengl");
 
 const imgui = @import("imgui.zig");
-const metal = @import("metal.zig");
+const macos = @import("macos.zig");
+const linux = @import("linux.zig");
+
 const Plugin = @import("../../plugin.zig");
 
 const PlatformData = switch (builtin.os.tag) {
@@ -33,15 +33,12 @@ const window_height = 500;
 plugin: *Plugin,
 allocator: std.mem.Allocator,
 
-scale_factor: f32 = 2.0,
+scale_factor: f32 = 1.0,
 platform_data: ?PlatformData,
 imgui_initialized: bool,
 visible: bool,
 width: u32,
 height: u32,
-
-const gl_major = 4;
-const gl_minor = 0;
 
 pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*GUI {
     std.log.debug("GUI init() called", .{});
@@ -68,6 +65,8 @@ pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*
         .height = window_height,
     };
 
+    try gui.initWindow();
+
     return gui;
 }
 
@@ -80,12 +79,24 @@ pub fn deinit(self: *GUI) void {
     self.allocator.destroy(self);
 }
 
+pub fn update(self: *GUI) !void {
+    switch (builtin.os.tag) {
+        .linux => {
+            try linux.update(self.plugin);
+        },
+        .macos => {
+            try macos.update(self.plugin);
+        },
+        else => {},
+    }
+}
+
 fn initWindow(self: *GUI) !void {
     std.log.debug("Creating window.", .{});
     try imgui.init(self);
     // Only init GLFW here with the window, other platforms will be inited with setParent()
     if (builtin.os.tag == .linux) {
-        try self.initGLFW();
+        try linux.init(self);
     }
 }
 
@@ -94,7 +105,18 @@ fn deinitWindow(self: *GUI) void {
 
     if (self.platform_data != null) {
         imgui.deinit(self);
-        self.deinitPlatform();
+        switch (builtin.os.tag) {
+            .macos => {
+                macos.deinit(self);
+            },
+            .linux => {
+                linux.deinit(self);
+            },
+            .windows => {
+                // TODO
+            },
+            else => {},
+        }
     }
 
     // I'm not sure if this is necessary, and on REAPER this keeps resulting in a crash no matter what
@@ -102,92 +124,6 @@ fn deinitWindow(self: *GUI) void {
     //     var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
     //     gui_host.closed(self.plugin.host, true);
     // }
-}
-
-inline fn deinitPlatform(self: *GUI) void {
-    switch (builtin.os.tag) {
-        .macos => {
-            metal.deinit(self);
-        },
-        .windows => {
-            // TODO
-        },
-        .linux => {
-            self.deinitGLFW();
-        },
-        else => {},
-    }
-}
-
-fn initGLFW(self: *GUI) !void {
-    if (self.platform_data != null) {
-        std.log.err("Platform already initialized!", .{});
-        return error.PlatformAlreadyInitialized;
-    }
-
-    try imgui.init(self);
-
-    // Initialize GLFW
-    try glfw.init();
-    errdefer glfw.terminate();
-
-    glfw.windowHint(.context_version_major, gl_major);
-    glfw.windowHint(.context_version_minor, gl_minor);
-    glfw.windowHint(.opengl_profile, .opengl_core_profile);
-    glfw.windowHint(.opengl_forward_compat, true);
-    glfw.windowHint(.client_api, .opengl_api);
-    glfw.windowHint(.doublebuffer, true);
-
-    const window_title = "ZSynth";
-    const window = try glfw.Window.create(self.width, self.height, window_title, null);
-    errdefer window.destroy();
-    window.setSizeLimits(100, 100, -1, -1);
-
-    glfw.makeContextCurrent(window);
-    glfw.swapInterval(1);
-
-    try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
-
-    zgui.backend.init(window);
-    errdefer zgui.backend.deinit();
-
-    self.platform_data = .{
-        .window = window,
-    };
-}
-
-fn deinitGLFW(self: *GUI) void {
-    if (self.platform_data) |data| {
-        data.window.destroy();
-        glfw.terminate();
-    }
-    self.platform_data = null;
-}
-
-fn drawGLFW(self: *GUI) !void {
-    if (self.platform_data == null) {
-        return error.PlatformNotInitialized;
-    }
-
-    var window = self.platform_data.?.window;
-    if (window.getKey(.escape) == .press) {
-        glfw.setWindowShouldClose(window, true);
-        return;
-    }
-
-    const gl = zopengl.bindings;
-
-    glfw.pollEvents();
-
-    gl.clearBufferfv(gl.COLOR, 0, &[_]f32{ 0, 0, 0, 1.0 });
-
-    const fb_size = window.getFramebufferSize();
-
-    zgui.backend.newFrame(@intCast(fb_size[0]), @intCast(fb_size[1]));
-    imgui.draw(self);
-    zgui.backend.draw();
-
-    window.swapBuffers();
 }
 
 pub fn show(self: *GUI) !void {
@@ -205,25 +141,6 @@ pub fn hide(self: *GUI) void {
     if (builtin.os.tag == .linux) {
         if (self.platform_data) |data| {
             data.window.setAttribute(.visible, true);
-        }
-    }
-}
-
-pub fn update(self: *GUI) !void {
-    if (self.platform_data) |data| {
-        switch (builtin.os.tag) {
-            .linux => {
-                if (data.window.shouldClose()) {
-                    std.log.info("Window requested close, closing!", .{});
-                    self.deinitWindow();
-                    return;
-                }
-                try self.drawGLFW();
-            },
-            .macos => {
-                try metal.update(self.plugin);
-            },
-            else => {},
         }
     }
 }
@@ -269,6 +186,7 @@ fn _isApiSupported(_: *const clap.Plugin, _: [*:0]const u8, is_floating: bool) c
     if (is_floating) return builtin.os.tag == .linux;
     return true;
 }
+
 /// returns true if the plugin has a preferred api. the host has no obligation to honor the plugin's preference,
 /// this is just a hint. `api` should be explicitly assigned as a pinter to one of the `window_api.*` constants,
 /// not copied.
@@ -279,6 +197,7 @@ fn _getPreferredApi(_: *const clap.Plugin, _: *[*:0]const u8, is_floating: *bool
     is_floating.* = builtin.os.tag == .linux;
     return true;
 }
+
 /// create and allocate all resources needed for the gui.
 /// if `is_floating` is true then the window will not be managed by the host. the plugin can set its window
 /// to stay above the parent window (see `setTransient`). `api` may be null or blank for floating windows.
@@ -299,6 +218,7 @@ fn _create(clap_plugin: *const clap.Plugin, api: ?[*:0]const u8, is_floating: bo
 
     return plugin.gui != null;
 }
+
 /// free all resources associated with the gui
 fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
     std.log.debug("Host called GUI destroy!", .{});
@@ -309,6 +229,7 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
     }
     plugin.gui = null;
 }
+
 /// set the absolute gui scaling factor, overriding any os info. should not be
 /// used if the windowing api relies upon logical pixels. if the plugin prefers
 /// to work out the saling factor itself by quering the os directly, then ignore
@@ -317,6 +238,7 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 fn _setScale(_: *const clap.Plugin, _: f64) callconv(.C) bool {
     return false;
 }
+
 /// get the current size of the plugin gui. `Plugin.create` must have been called prior to
 /// asking for the size. returns true and populates `width.*` and `height.*` if the plugin
 /// successfully got the size.
@@ -330,15 +252,18 @@ fn _getSize(clap_plugin: *const clap.Plugin, width: *u32, height: *u32) callconv
     }
     return false;
 }
+
 /// returns true if the window is resizable (mouse drag)
 fn _canResize(_: *const clap.Plugin) callconv(.C) bool {
     return false;
 }
+
 /// returns true and populates `hints.*` if the plugin can provide hints on how to resize the window.
 fn _getResizeHints(_: *const clap.Plugin, hints: *clap.ext.gui.ResizeHints) callconv(.C) bool {
     _ = hints;
     return false;
 }
+
 /// if the plugin gui is resizable, then the plugin will calculate the closest usable size which
 /// fits the given size. this method does not resize the gui. returns true and adjusts `width.*`
 /// and `height.*` if the plugin could adjust the given size.
@@ -347,6 +272,7 @@ fn _adjustSize(_: *const clap.Plugin, width: *u32, height: *u32) callconv(.C) bo
     _ = height;
     return false;
 }
+
 /// sets the plugin's window size. returns true if the
 /// plugin successfully resized its window to the given size.
 fn _setSize(_: *const clap.Plugin, width: u32, height: u32) callconv(.C) bool {
@@ -363,8 +289,8 @@ fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gu
             .macos => {
                 const view: *objc.app_kit.View = @ptrCast(plugin_window.data.cocoa);
 
-                metal.init(gui, view) catch |err| {
-                    std.log.err("Error initializing metal! {}", .{err});
+                macos.init(gui, view) catch |err| {
+                    std.log.err("Error initializing window! {}", .{err});
                     return false;
                 };
                 return true;
@@ -375,10 +301,12 @@ fn _setParent(clap_plugin: *const clap.Plugin, plugin_window: *const clap.ext.gu
 
     return false;
 }
+
 /// sets the plugin window to stay above the given window. returns true on success.
 fn _setTransient(_: *const clap.Plugin, _: *const clap.ext.gui.Window) callconv(.C) bool {
     return true;
 }
+
 /// suggests a window title. only for floating windows.
 fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv(.C) bool {
     const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
@@ -388,6 +316,7 @@ fn _suggestTitle(clap_plugin: *const clap.Plugin, title: [*:0]const u8) callconv
     }
     return false;
 }
+
 /// show the plugin window. returns true on success.
 fn _show(clap_plugin: *const clap.Plugin) callconv(.C) bool {
     std.log.debug("GUI show() called", .{});

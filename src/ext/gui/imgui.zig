@@ -192,6 +192,7 @@ pub fn draw(self: *GUI) void {
                             .no_menus = true,
                             .no_frame = true,
                         },
+                        .h = 200,
                     })) {
                         zgui.plot.setupAxis(.x1, .{ .flags = .{
                             .no_label = true,

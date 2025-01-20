@@ -44,7 +44,6 @@ pub fn windowShouldClose(block: *objc.foundation.BlockLiteral(*Plugin)) callconv
 }
 
 pub fn init(gui: *GUI, view: *objc.app_kit.View) !void {
-    try imgui.init(gui);
     const NSApp = objc.app_kit.Application.sharedApplication();
     const app_delegate = NSApp.delegate();
     if (app_delegate == null) {
