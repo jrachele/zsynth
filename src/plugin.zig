@@ -173,12 +173,27 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
     const zone = tracy.ZoneN(@src(), "Process");
     defer zone.End();
 
-    const plugin = fromClapPlugin(clap_plugin);
     std.debug.assert(clap_process.audio_inputs_count == 0);
     std.debug.assert(clap_process.audio_outputs_count == 1);
 
+    const plugin = fromClapPlugin(clap_plugin);
+
     // Each frame lasts 1 / 48000 seconds. There are typically 256 frames per process call
     const frame_count = clap_process.frames_count;
+
+    const dt: f64 = @as(f64, @floatFromInt(frame_count)) / plugin.sample_rate.?;
+
+    // Process parameter event changes
+    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
+
+    // Update the GUI if ready
+    if (plugin.gui) |gui| {
+        gui.tick(dt);
+        if (gui.shouldUpdate()) {
+            // dispatch onMainThread, which calls gui.update()
+            plugin.host.requestCallback(plugin.host);
+        }
+    }
 
     // The number of events corresponds to how many are expected to occur within my 256 frame range
     const input_event_count = clap_process.in_events.size(clap_process.in_events);
@@ -192,8 +207,9 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         output_buffer_right[i] = 0;
     }
 
-    // Process parameter event changes
-    extensions.Params._flush(clap_plugin, clap_process.in_events, clap_process.out_events);
+    if (plugin.voices.getVoiceCount() == 0 and clap_process.in_events.size(clap_process.in_events) == 0) {
+        return clap.Process.Status.sleep;
+    }
 
     var event_index: u32 = 0;
     var current_frame: u32 = 0;
@@ -257,7 +273,6 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         }
     }
 
-    plugin.host.requestCallback(plugin.host);
     return clap.Process.Status.@"continue";
 }
 

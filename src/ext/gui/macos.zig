@@ -8,68 +8,12 @@ const imgui = @import("imgui.zig");
 const GUI = @import("gui.zig");
 const Plugin = @import("../../plugin.zig");
 
-const WindowDelegate = opaque {
-    pub const InternalInfo = objc.objc.ExternClass("ZSynthWindowDelegate", WindowDelegate, objc.foundation.ObjectInterface, &.{objc.app_kit.WindowDelegate});
-    pub const as = InternalInfo.as;
-    pub const retain = InternalInfo.retain;
-    pub const release = InternalInfo.release;
-    pub const autorelease = InternalInfo.autorelease;
-    pub const new = InternalInfo.new;
-    pub const alloc = InternalInfo.alloc;
-    pub const allocInit = InternalInfo.allocInit;
-
-    pub fn setBlock_windowDidResize(gui: *WindowDelegate, block: *objc.foundation.Block(fn () void)) void {
-        method_windowDidResize(gui, block);
-    }
-    const method_windowDidResize = @extern(
-        *const fn (*WindowDelegate, *objc.foundation.Block(fn () void)) callconv(.C) void,
-        .{ .name = "\x01-[ZSynthWindowDelegate setBlock_windowDidResize:]" },
-    );
-
-    pub fn setBlock_windowShouldClose(gui: *WindowDelegate, block: *objc.foundation.Block(fn () bool)) void {
-        method_windowShouldClose(gui, block);
-    }
-    const method_windowShouldClose = @extern(
-        *const fn (*WindowDelegate, *objc.foundation.Block(fn () bool)) callconv(.C) void,
-        .{ .name = "\x01-[ZSynthWindowDelegate setBlock_windowShouldClose:]" },
-    );
-};
-
-pub fn windowShouldClose(block: *objc.foundation.BlockLiteral(*Plugin)) callconv(.C) bool {
-    const plugin: *Plugin = block.context;
-    if (plugin.gui) |gui| {
-        gui.deinit();
-    }
-    return true;
-}
-
 pub fn init(gui: *GUI, view: *objc.app_kit.View) !void {
-    const NSApp = objc.app_kit.Application.sharedApplication();
-    const app_delegate = NSApp.delegate();
-    if (app_delegate == null) {
-        std.log.debug("No app delegate registered!", .{});
-    }
-    const window_delegate = WindowDelegate.allocInit();
-    var window_should_close = objc.foundation.stackBlockLiteral(
-        windowShouldClose,
-        gui.plugin, // Pass the plugin here as the GUI may be outlived
-        null,
-        null,
-    );
-    window_delegate.setBlock_windowShouldClose(window_should_close.asBlock().copy());
-
     const window = view.window();
 
     // For whatever reason, this is broken on Intel macs
-    if (builtin.cpu.arch == .arm) {
-        gui.scale_factor = @floatCast(window.backingScaleFactor());
-    } else {
-        // Use an objective C function directly instead
-        gui.scale_factor = GetWindowBackingScaleFactor(window);
-    }
+    gui.scale_factor = @floatCast(window.backingScaleFactor());
     imgui.applyScaleFactor(gui);
-
-    window.setDelegate(window_delegate.as(objc.app_kit.WindowDelegate));
 
     const width: f32 = @floatFromInt(gui.width);
     const height: f32 = @floatFromInt(gui.height);
@@ -178,5 +122,3 @@ pub fn draw(gui: *GUI) !void {
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
 }
-
-extern fn GetWindowBackingScaleFactor(window: *const anyopaque) callconv(.c) f32;

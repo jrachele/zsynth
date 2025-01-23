@@ -49,7 +49,7 @@ pub fn build(b: *std.Build) void {
     const objc = b.dependency("mach-objc", .{});
 
     const ztracy = b.dependency("ztracy", .{
-        .enable_ztracy = (builtin.mode == .Debug or profiling) and !disable_profiling,
+        .enable_ztracy = (builtin.mode == .Debug or profiling == true) and !disable_profiling,
         .callstack = 20,
         .on_demand = true,
     });
@@ -103,19 +103,7 @@ pub fn build(b: *std.Build) void {
         pkg.root_module.addOptions("static_data", static_data);
 
         if (builtin.os.tag == .macos) {
-            const objcflags = &.{
-                "-Wno-deprecated",
-                "-Wno-pedantic",
-                "-Wno-availability",
-            };
-
             pkg.root_module.addImport("objc", objc.module("mach-objc"));
-            pkg.addCSourceFiles(.{
-                .files = &.{
-                    "src/ext/gui/metal_window_delegate.mm",
-                },
-                .flags = objcflags,
-            });
             pkg.linkFramework("AppKit");
             pkg.linkFramework("Cocoa");
             pkg.linkFramework("CoreGraphics");

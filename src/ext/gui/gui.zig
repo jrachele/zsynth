@@ -30,6 +30,7 @@ const PlatformData = switch (builtin.os.tag) {
 
 const window_width = 800;
 const window_height = 500;
+const FPS = 60.0;
 
 plugin: *Plugin,
 allocator: std.mem.Allocator,
@@ -40,6 +41,7 @@ imgui_initialized: bool,
 visible: bool,
 width: u32,
 height: u32,
+elapsed_since_last_update: f64 = 0.0,
 
 pub fn init(allocator: std.mem.Allocator, plugin: *Plugin, is_floating: bool) !*GUI {
     std.log.debug("GUI init() called", .{});
@@ -93,6 +95,16 @@ pub fn update(self: *GUI) !void {
         },
         else => {},
     }
+
+    self.elapsed_since_last_update = 0;
+}
+
+pub fn tick(self: *GUI, dt: f64) void {
+    self.elapsed_since_last_update += dt;
+}
+
+pub fn shouldUpdate(self: *const GUI) bool {
+    return self.elapsed_since_last_update > 1.0 / FPS;
 }
 
 fn initWindow(self: *GUI) !void {
@@ -122,12 +134,6 @@ fn deinitWindow(self: *GUI) void {
             else => {},
         }
     }
-
-    // I'm not sure if this is necessary, and on REAPER this keeps resulting in a crash no matter what
-    // if (self.plugin.host.getExtension(self.plugin.host, clap.ext.gui.id)) |host_header| {
-    //     var gui_host: *const clap.ext.gui.Host = @ptrCast(@alignCast(host_header));
-    //     gui_host.closed(self.plugin.host, true);
-    // }
 }
 
 pub fn show(self: *GUI) !void {
@@ -239,7 +245,15 @@ fn _destroy(clap_plugin: *const clap.Plugin) callconv(.C) void {
 /// to work out the saling factor itself by quering the os directly, then ignore
 /// the call. scale of 2 means 200% scaling. returns true when scaling could be
 /// applied. returns false when the call was ignored or scaling was not applied.
-fn _setScale(_: *const clap.Plugin, _: f64) callconv(.C) bool {
+fn _setScale(clap_plugin: *const clap.Plugin, scale_factor: f64) callconv(.C) bool {
+    _ = clap_plugin;
+    _ = scale_factor;
+    // const plugin: *Plugin = Plugin.fromClapPlugin(clap_plugin);
+    // if (plugin.gui) |gui| {
+    //     gui.scale_factor = @floatCast(scale_factor);
+    //     imgui.applyScaleFactor(gui);
+    //     return true;
+    // }
     return false;
 }
 
