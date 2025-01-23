@@ -26,11 +26,11 @@ const VoiceRenderPayload = struct {
     end: u32,
     output_left: [*]f32,
     output_right: [*]f32,
-    data_mutex: std.Thread.Mutex,
 };
 
 voices: std.ArrayList(Voice),
 render_payload: ?VoiceRenderPayload = null,
+render_mutex: std.Thread.Mutex = .{},
 
 pub fn init(allocator: std.mem.Allocator) Voices {
     return .{
