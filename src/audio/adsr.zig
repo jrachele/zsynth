@@ -1,5 +1,7 @@
-const std = @import("std");
 const ADSR = @This();
+
+const std = @import("std");
+const tracy = @import("tracy");
 
 const ADSRState = enum {
     Idle,
@@ -51,6 +53,9 @@ fn release(t: f64, duration: f64, sustain: f64) f64 {
 }
 
 pub fn update(self: *ADSR, dt: f64) void {
+    const zone = tracy.ZoneN(@src(), "ADSR update");
+    defer zone.End();
+
     self.elapsed += dt;
     switch (self.state) {
         ADSRState.Idle => {},

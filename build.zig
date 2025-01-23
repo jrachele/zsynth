@@ -2,8 +2,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Step = std.Build.Step;
 
-const util = @import("util.zig");
-
 pub fn build(b: *std.Build) void {
     const generate_wavetables_comptime = b.option(
         bool,
@@ -50,8 +48,10 @@ pub fn build(b: *std.Build) void {
     const zopengl = b.dependency("zopengl", .{});
     const objc = b.dependency("mach-objc", .{});
 
-    const tracy = b.dependency("tracy", .{
-        .tracy_enable = (builtin.mode == .Debug or profiling) and !disable_profiling,
+    const ztracy = b.dependency("ztracy", .{
+        .enable_ztracy = (builtin.mode == .Debug or profiling) and !disable_profiling,
+        .callstack = 20,
+        .on_demand = true,
     });
 
     const lib = b.addSharedLibrary(
@@ -96,9 +96,8 @@ pub fn build(b: *std.Build) void {
         pkg.linkLibrary(zopengl.artifact("zopengl"));
 
         // Profiling
-        pkg.root_module.addImport("tracy", tracy.module("tracy"));
-        pkg.linkLibrary(tracy.artifact("tracy"));
-        pkg.linkLibCpp();
+        pkg.root_module.addImport("tracy", ztracy.module("root"));
+        pkg.linkLibrary(ztracy.artifact("tracy"));
 
         pkg.root_module.addOptions("options", options);
         pkg.root_module.addOptions("static_data", static_data);
@@ -163,6 +162,15 @@ pub const CreateClapPluginStep = struct {
     }
 
     fn make(step: *Step, _: Step.MakeOptions) !void {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        const allocator = gpa.allocator();
+        defer switch (gpa.deinit()) {
+            .ok => {},
+            .leak => {
+                std.log.err("Memory leaks when building!", .{});
+            },
+        };
+
         const self: *Self = @fieldParentPtr("step", step);
         if (self.build.build_root.path) |path| {
             var dir = try std.fs.openDirAbsolute(path, .{});
@@ -171,13 +179,13 @@ pub const CreateClapPluginStep = struct {
                     _ = try dir.updateFile("zig-out/lib/libzsynth.dylib", dir, "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth", .{});
                     _ = try dir.updateFile("macos/info.plist", dir, "zig-out/lib/ZSynth.clap/Contents/info.plist", .{});
                     _ = try dir.updateFile("macos/PkgInfo", dir, "zig-out/lib/ZSynth.clap/Contents/PkgInfo", .{});
-                    // var buffer: [1024]u8 = undefined;
-                    // var fba = std.heap.FixedBufferAllocator.init(&buffer);
-                    // const allocator = fba.allocator();
-                    // const source_dir = try dir.openDir("zig-out/lib/ZSynth.clap/", .{});
-                    // const dest_path = try std.fs.realpathAlloc(allocator, "~/Library/Audio/Plug-Ins/CLAP/ZSynth.clap");
-                    // defer allocator.free(dest_path);
-                    // try util.copyDirRecursiveAbsolute(allocator, source_dir, dest_path);
+                    if (builtin.mode == .Debug) {
+                        // Also generate dynamic symbols for Tracy
+                        var child = std.process.Child.init(&.{ "dsymutil", "zig-out/lib/ZSynth.clap/Contents/MacOS/ZSynth" }, allocator);
+                        _ = try child.spawnAndWait();
+                    }
+                    // Copy the CLAP plugin to the library folder
+                    try copyDirRecursiveToHome(allocator, "zig-out/lib/ZSynth.clap/", "Library/Audio/Plug-Ins/CLAP/ZSynth.clap");
                 },
                 .linux => {
                     _ = try dir.updateFile("zig-out/lib/libzsynth.so", dir, "zig-out/lib/zsynth.clap", .{});
@@ -190,3 +198,17 @@ pub const CreateClapPluginStep = struct {
         }
     }
 };
+
+fn copyDirRecursiveToHome(allocator: std.mem.Allocator, source_dir: []const u8, dest_path_from_home: []const u8) !void {
+    const home = try std.process.getEnvVarOwned(allocator, "HOME");
+    defer allocator.free(home);
+    const dest_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ home, dest_path_from_home });
+    defer allocator.free(dest_path);
+    var cp = std.process.Child.init(&.{
+        "cp",
+        "-R",
+        source_dir,
+        dest_path,
+    }, allocator);
+    _ = try cp.spawnAndWait();
+}

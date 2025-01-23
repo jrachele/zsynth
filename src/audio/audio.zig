@@ -33,9 +33,8 @@ fn calculatePhaseOffsetForSecondVoice(voice: *const Voice, previous_voice: ?*con
 
 // Processing logic
 pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) void {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Process Note Changes" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Note change");
+    defer zone.End();
 
     if (event.space_id != clap.events.core_space_id) {
         return;
@@ -81,9 +80,9 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
                 if ((voice.channel == note_event.channel or note_event.channel == .unspecified) and
                     (voice.key == note_event.key or note_event.key == .unspecified) and
                     (voice.noteId == note_event.note_id or note_event.note_id == .unspecified))
-                    {
-                        voice.adsr.onNoteOff();
-                    }
+                {
+                    voice.adsr.onNoteOff();
+                }
             }
         },
         .note_choke => {
@@ -93,10 +92,10 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
                 if ((voice.channel == note_event.channel or note_event.channel == .unspecified) and
                     (voice.key == note_event.key or note_event.key == .unspecified) and
                     (voice.noteId == note_event.note_id or note_event.note_id == .unspecified))
-                    {
-                        _ = plugin.voices.voices.orderedRemove(i);
-                        return;
-                    }
+                {
+                    _ = plugin.voices.voices.orderedRemove(i);
+                    return;
+                }
             }
         },
         .note_expression => {
@@ -118,9 +117,8 @@ pub fn processNoteChanges(plugin: *Plugin, event: *const clap.events.Header) voi
 }
 
 pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, output_right: [*]f32) void {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Render Audio" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Render audio");
+    defer zone.End();
 
     plugin.voices.render_payload = .{
         .data_mutex = .{},
@@ -132,6 +130,7 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
 
     var did_render_audio = false;
     const should_use_threadpool = builtin.mode != .Debug or plugin.params.get(Parameter.DebugBool1).Bool == true;
+    // After this many voices, it's faster to multi-thread them
     if (should_use_threadpool) {
         if (plugin.host.getExtension(plugin.host, clap.ext.thread_pool.id)) |ext_raw| {
             const thread_pool: *const clap.ext.thread_pool.Host = @ptrCast(@alignCast(ext_raw));
@@ -151,6 +150,8 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
     }
 
     // Apply filtering if enabled
+    const zone_filtering = tracy.ZoneN(@src(), "Filtering");
+    defer zone_filtering.End();
     const enable_filtering = plugin.params.get(.FilterEnable).Bool;
     const filter_type = plugin.params.get(.FilterType).Filter;
     const q: f32 = @floatCast(plugin.params.get(.FilterQ).Float);
@@ -210,9 +211,8 @@ fn filterRC(sample_rate: f32, input_sample: f32, prev_sample: f32, cutoff_freq: 
 }
 
 pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Process Voice" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Process voice");
+    defer zone.End();
 
     var voices = plugin.voices;
     if (voices.render_payload == null) {
@@ -246,12 +246,19 @@ pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
         const t: f64 = @floatFromInt(voice.elapsed_frames);
 
         // retrieve the wave data from the pre-calculated table
-        const osc1_wave = waves.get(&plugin.wave_table, osc1_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc1_detune, osc1_octave), t);
-        const osc2_wave = waves.get(&plugin.wave_table, osc2_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc2_detune, osc2_octave), t);
+        var osc1_wave: f64 = 0;
+        var osc2_wave: f64 = 0;
+        if (oscillator_mix < 1) {
+            // Retrieve oscillator 1
+            osc1_wave = waves.get(&plugin.wave_table, osc1_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc1_detune, osc1_octave), t);
+        }
+        if (oscillator_mix > 0) {
+            // Retrieve oscillator 2
+            osc2_wave = waves.get(&plugin.wave_table, osc2_wave_shape, plugin.sample_rate.?, voice.getTunedKey(osc2_detune, osc2_octave), t);
+        }
 
-        tracy.frameMark();
-        const postprocessing = tracy.initZone(@src(), .{ .name = "Wave post-process" });
-        defer postprocessing.deinit();
+        const zone_postprocess = tracy.ZoneN(@src(), "Wave post-process");
+        defer zone_postprocess.End();
         wave = (osc1_wave * (1 - oscillator_mix)) + (osc2_wave * oscillator_mix);
 
         // Elapse the voice time by a frame and update envelope
@@ -275,6 +282,8 @@ pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
             output_r *= scaling;
         }
 
+        const zone_access_render_mutex = tracy.ZoneN(@src(), "Wave wait for render mutex and write");
+        defer zone_access_render_mutex.End();
         render_payload.data_mutex.lock();
         defer render_payload.data_mutex.unlock();
 

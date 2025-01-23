@@ -38,6 +38,9 @@ pub fn init(gui: *GUI) !void {
 
     try zopengl.loadCoreProfile(glfw.getProcAddress, gl_major, gl_minor);
 
+    gui.scale_factor = window.getContentScale()[1];
+    imgui.applyScaleFactor(gui);
+
     zgui.backend.init(window);
     errdefer zgui.backend.deinit();
 

@@ -28,3 +28,9 @@
     return NO;
 }
 @end
+
+extern "C" {
+    float GetWindowBackingScaleFactor(NSWindow *window) {
+      return [window backingScaleFactor];
+    }
+}

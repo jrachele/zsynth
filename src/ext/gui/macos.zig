@@ -63,7 +63,11 @@ pub fn init(gui: *GUI, view: *objc.app_kit.View) !void {
     // For whatever reason, this is broken on Intel macs
     if (builtin.cpu.arch == .arm) {
         gui.scale_factor = @floatCast(window.backingScaleFactor());
+    } else {
+        // Use an objective C function directly instead
+        gui.scale_factor = GetWindowBackingScaleFactor(window);
     }
+    imgui.applyScaleFactor(gui);
 
     window.setDelegate(window_delegate.as(objc.app_kit.WindowDelegate));
 
@@ -174,3 +178,5 @@ pub fn draw(gui: *GUI) !void {
     command_buffer.commit();
     command_buffer.waitUntilCompleted();
 }
+
+extern fn GetWindowBackingScaleFactor(window: *const anyopaque) callconv(.c) f32;

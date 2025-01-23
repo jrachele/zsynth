@@ -64,6 +64,8 @@ pub const Wave = enum {
 };
 
 pub inline fn getFrequency(key: f64) f64 {
+    const zone = tracy.ZoneN(@src(), "getFrequency");
+    defer zone.End();
     return 440.0 * std.math.exp2((key - 57.0) / 12.0);
 }
 
@@ -74,9 +76,8 @@ inline fn getSample(sample_data: []const f64, index: usize) f64 {
 
 // Cubic interpolation using Catmull-Rom spline
 inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Cubic interpolation" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Cubic interpolation");
+    defer zone.End();
 
     var index: usize = @intFromFloat(@floor(index_f));
     const frac = index_f - @floor(index_f);
@@ -103,9 +104,8 @@ inline fn cubicInterpolate(sample_data: []const f64, index_f: f64) f64 {
 }
 
 pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f64, key: f64, frames: f64) f64 {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Wavetable get with interp" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Wavetable get");
+    defer zone.End();
 
     if (!sampleRateSupported(sample_rate)) {
         std.debug.panic("Attempted to use plugin with unsupported sample rate!: {d}", .{sample_rate});
@@ -117,8 +117,7 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
         return 0;
     }
 
-    tracy.frameMark();
-    const table_indexing = tracy.initZone(@src(), .{ .name = "Table indexing" });
+    const table_indexing = tracy.ZoneN(@src(), "Table indexing");
     const frequency = getFrequency(key);
 
     const table_index: usize = @intFromFloat(key / half_steps_per_table);
@@ -132,7 +131,7 @@ pub inline fn get(wave_table: *const WaveTable, wave_type: Wave, sample_rate: f6
     const index_l: usize = @intFromFloat(std.math.floor(index_f));
     const index_r: usize = @mod(@as(usize, @intFromFloat(std.math.ceil(index_f))), sample_count);
 
-    table_indexing.deinit();
+    table_indexing.End();
 
     // If our index was an integer value to begin with, no need to interpolate
     if (index_l == index_r) {

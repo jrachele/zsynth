@@ -41,13 +41,17 @@
         //     .url = "https://github.com/zig-gamedev/zglfw/archive/4a5ec6186173a6ae4d71ad01b64dac5561ef0b16.tar.gz",
         //     .hash = "1220fb278bcd5f1be0096c841c29de2374806f3980160aa3e409f551b1c242254b74",
         // },
-        .zglfw = .{ .path = "zglfw/", },
+        .zglfw = .{
+            .path = "zglfw/",
+        },
         .@"mach-objc" = .{
             .path = "mach-objc/",
         },
-        .tracy = .{
-            .path = "zig-tracy/",
-        }
+        .ztracy = .{
+            // .url = "https://github.com/zig-gamedev/ztracy/archive/5af60074f355ecda6114d08dcc8c931c3d163c94.tar.gz",
+            // .hash = "1220293b509e9238e43828b00ee18e38eeace190ef844b74bf54e3db6e7da7398f4b",
+            .path = "ztracy/",
+        },
     },
 
     .paths = .{

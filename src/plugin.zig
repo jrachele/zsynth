@@ -170,9 +170,8 @@ fn _reset(clap_plugin: *const clap.Plugin) callconv(.C) void {
 
 // This occurs on the audio thread
 fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) callconv(.C) clap.Process.Status {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Process" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "Process");
+    defer zone.End();
 
     const plugin = fromClapPlugin(clap_plugin);
     std.debug.assert(clap_process.audio_inputs_count == 0);

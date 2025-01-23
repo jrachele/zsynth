@@ -14,9 +14,8 @@ pub fn create() clap.ext.state.Plugin {
 
 // Frankly shocking how nice Zig makes this
 fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(.C) bool {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Saving plugin state" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "State saving");
+    defer zone.End();
 
     std.log.debug("Saving plugin state...", .{});
     const plugin = Plugin.fromClapPlugin(clap_plugin);
@@ -48,9 +47,8 @@ fn _save(clap_plugin: *const clap.Plugin, stream: *const clap.OStream) callconv(
 }
 
 fn _load(clap_plugin: *const clap.Plugin, stream: *const clap.IStream) callconv(.C) bool {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "Loading plugin state" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "State loading");
+    defer zone.End();
 
     std.log.debug("State._load called from plugin host", .{});
     const plugin = Plugin.fromClapPlugin(clap_plugin);

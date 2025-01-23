@@ -81,9 +81,8 @@ pub fn deinit(self: *GUI) void {
 }
 
 pub fn update(self: *GUI) !void {
-    tracy.frameMark();
-    const zone = tracy.initZone(@src(), .{ .name = "GUI update" });
-    defer zone.deinit();
+    const zone = tracy.ZoneN(@src(), "GUI update");
+    defer zone.End();
 
     switch (builtin.os.tag) {
         .linux => {
