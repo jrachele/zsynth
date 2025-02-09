@@ -10,7 +10,7 @@
 
     // This is a [Semantic Version](https://semver.org/).
     // In a future version of Zig it will be used for package deduplication.
-    .version = "0.0.1",
+    .version = "1.0.0",
 
     // This field is optional.
     // This is currently advisory only; Zig does not yet do anything
@@ -31,26 +31,25 @@
             .url = "git+https://git.sr.ht/~interpunct/clap-zig-bindings#18442a2dc58b8625b9d6d036b0e4bb7ffd031aaf",
             .hash = "12203de46738cb75936cefe6bdd83aaead64c67bd46f8707c981a02a9bf2a695195c",
         },
-        .zgui = .{ .path = "zgui/" },
         .zopengl = .{
             .url = "https://github.com/zig-gamedev/zopengl/archive/c9c293a9af388478bca0ad52007a72372ef71747.tar.gz",
             .hash = "1220c030f5e33e09bd80fe7a7b064b65e1fc02e9bbf603ba04716866c9f1ca16f8ce",
         },
-        // TODO: Undo this comment
-        // .zglfw = .{
-        //     .url = "https://github.com/zig-gamedev/zglfw/archive/4a5ec6186173a6ae4d71ad01b64dac5561ef0b16.tar.gz",
-        //     .hash = "1220fb278bcd5f1be0096c841c29de2374806f3980160aa3e409f551b1c242254b74",
-        // },
-        .zglfw = .{
-            .path = "zglfw/",
-        },
         .@"mach-objc" = .{
-            .path = "mach-objc/",
+            .url = "https://github.com/hexops/mach-objc/archive/79b6f80c32b14948554958afe72dace261b14afc.tar.gz",
+            .hash = "12203675829014e69be2ea7c126ecf25d403009d336b7ca5f6e7c4ccede826c8e597",
+        },
+        .zglfw = .{
+            .url = "https://github.com/zig-gamedev/zglfw/archive/5aaf806521bbda4385b1041d9448bd0c40192a1c.tar.gz",
+            .hash = "12202db5d18aa92ae61b0e47c11ec517eeb5984d8e2647ff513807ff30a444fef49a",
         },
         .ztracy = .{
-            // .url = "https://github.com/zig-gamedev/ztracy/archive/5af60074f355ecda6114d08dcc8c931c3d163c94.tar.gz",
-            // .hash = "1220293b509e9238e43828b00ee18e38eeace190ef844b74bf54e3db6e7da7398f4b",
-            .path = "ztracy/",
+            .url = "https://github.com/zig-gamedev/ztracy/archive/b14c70625294de7c98fc08f7b6bd327dca01c79c.tar.gz",
+            .hash = "1220db44aa021874e7d813a816e79c1a60ac8b67ea7e31846c242f0736277353196d",
+        },
+        .zgui = .{
+            .url = "https://github.com/jrachele/zgui/archive/ed5d18079a7adbdf6262e6a5c71a0148a6be0485.tar.gz",
+            .hash = "12208dcbbbfee7bad3d27531c2956e3aad1c88eec717359282d85a6804cf833c6a29",
         },
     },
 

@@ -180,15 +180,6 @@ pub fn draw(gui: *GUI) void {
                         sum_yv[i] = (osc1_yv[i] * (1 - oscillator_mix)) + (osc2_yv[i] * oscillator_mix);
                     }
 
-                    // const enable_filtering = gui.plugin.params.get(.FilterEnable).Bool;
-                    // const filter_type = gui.plugin.params.get(.FilterType).Filter;
-                    // const q: f32 = @floatCast(gui.plugin.params.get(.FilterQ).Float);
-                    // if (enable_filtering) {
-                    //     const cutoff_freq: f32 = @floatCast(gui.plugin.params.get(.FilterFreq).Float);
-                    //     const sample_rate_f32: f32 = @floatCast(sample_rate);
-                    //     audio.filter(filter_type, sum_yv[0..], sample_rate_f32, cutoff_freq, q);
-                    // }
-
                     if (zgui.plot.beginPlot("Wave Form##Plot", .{
                         .flags = .{
                             .no_box_select = true,
