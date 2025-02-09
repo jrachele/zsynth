@@ -10,6 +10,7 @@ const extensions = @import("extensions.zig");
 const Params = @import("ext/params.zig");
 const GUI = @import("ext/gui/gui.zig");
 const Voices = @import("audio/voices.zig");
+const Filter = @import("audio/filter.zig");
 
 const audio = @import("audio/audio.zig");
 const waves = @import("audio/waves.zig");
@@ -24,6 +25,8 @@ plugin: clap.Plugin,
 host: *const clap.Host,
 voices: Voices,
 params: Params,
+filter_left: Filter,
+filter_right: Filter,
 gui: ?*GUI,
 wave_table: WaveTable,
 
@@ -86,6 +89,8 @@ pub fn init(allocator: std.mem.Allocator, host: *const clap.Host) !*Plugin {
         .wave_table = wave_table,
         .gui = null,
         .job_mutex = .{},
+        .filter_left = undefined,
+        .filter_right = undefined,
     };
 
     return plugin;
@@ -144,6 +149,15 @@ fn _activate(
     std.log.debug("Activate", .{});
     const plugin = fromClapPlugin(clap_plugin);
     plugin.sample_rate = sample_rate;
+    const sample_rate_32: f32 = @floatCast(sample_rate);
+    const filter_type = plugin.params.get(.FilterType).Filter;
+    const q: f32 = @floatCast(plugin.params.get(.FilterQ).Float);
+    const cutoff_freq: f32 = @floatCast(plugin.params.get(.FilterFreq).Float);
+    plugin.filter_left = Filter.init(filter_type, cutoff_freq, sample_rate_32, q) catch |err| {
+        std.log.err("Error occurred when setting initial filter values {}", .{err});
+        return true;
+    };
+    plugin.filter_right = Filter.init(filter_type, cutoff_freq, sample_rate_32, q) catch unreachable;
     return true;
 }
 
@@ -242,6 +256,17 @@ fn _process(clap_plugin: *const clap.Plugin, clap_process: *const clap.Process) 
         audio.renderAudio(plugin, current_frame, next_frame, output_buffer_left, output_buffer_right);
         current_frame = next_frame;
     }
+
+    // Apply filtering if enabled
+    const zone_filtering = tracy.ZoneN(@src(), "Filtering");
+    const enable_filtering = plugin.params.get(.FilterEnable).Bool;
+    if (enable_filtering) {
+        for (0..frame_count) |i| {
+            output_buffer_left[i] = plugin.filter_left.step(output_buffer_left[i]);
+            output_buffer_right[i] = plugin.filter_right.step(output_buffer_right[i]);
+        }
+    }
+    zone_filtering.End();
 
     var i: u32 = 0;
     while (i < plugin.voices.voices.items.len) : (i += 1) {

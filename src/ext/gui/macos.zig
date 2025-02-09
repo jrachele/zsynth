@@ -11,7 +11,6 @@ const Plugin = @import("../../plugin.zig");
 pub fn init(gui: *GUI, view: *objc.app_kit.View) !void {
     const window = view.window();
 
-    // For whatever reason, this is broken on Intel macs
     gui.scale_factor = @floatCast(window.backingScaleFactor());
     imgui.applyScaleFactor(gui);
 

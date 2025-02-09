@@ -9,11 +9,7 @@ const tracy = @import("tracy");
 const Plugin = @import("../plugin.zig");
 const Wave = @import("../audio/waves.zig").Wave;
 
-pub const Filter = enum {
-    LowPass,
-    BandPass,
-    HighPass,
-};
+const FilterType = @import("../audio/filter.zig").FilterType;
 
 const Info = clap.ext.params.Info;
 
@@ -48,7 +44,7 @@ pub const Parameter = enum {
 pub const ParameterValue = union(enum) {
     Float: f64,
     Wave: Wave,
-    Filter: Filter,
+    Filter: FilterType,
     Bool: bool,
 
     pub fn asFloat(parameterValue: ParameterValue) f64 {
@@ -90,7 +86,7 @@ pub const param_defaults = std.enums.EnumFieldStruct(Parameter, ParameterValue, 
     .Mix = .{ .Float = 0.0 },
 
     .FilterEnable = .{ .Bool = false },
-    .FilterType = .{ .Filter = Filter.LowPass },
+    .FilterType = .{ .Filter = FilterType.LowPass },
     .FilterFreq = .{ .Float = 20000 },
     .FilterQ = .{ .Float = 1.0 },
 
@@ -396,7 +392,7 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
                 .cookie = null,
                 .default_value = param_defaults.FilterType.asFloat(),
                 .min_value = 0,
-                .max_value = std.meta.fields(Filter).len,
+                .max_value = std.meta.fields(FilterType).len,
                 .name = [_]u8{0} ** 256,
 
                 .flags = .{
@@ -431,7 +427,7 @@ pub fn _getInfo(clap_plugin: *const clap.Plugin, index: u32, info: *Info) callco
             info.* = .{
                 .cookie = null,
                 .default_value = param_defaults.FilterQ.Float,
-                .min_value = 0,
+                .min_value = 1,
                 .max_value = 100,
                 .name = [_]u8{0} ** 256,
                 .flags = .{
@@ -567,7 +563,7 @@ pub fn _valueToText(
         // Filter
         Parameter.FilterType => {
             const intValue: u32 = @intFromFloat(value);
-            const filter = std.meta.intToEnum(Filter, intValue) catch return false;
+            const filter = std.meta.intToEnum(FilterType, intValue) catch return false;
             bufSlice = std.fmt.bufPrint(out_buf, "{s}", .{@tagName(filter)}) catch return false;
         },
         // Boolean parameters
@@ -627,14 +623,14 @@ fn _textToValue(
         },
         // Filter parameters
         .FilterType => {
-            if (std.mem.startsWith(u8, value, @tagName(Filter.BandPass))) {
-                out_value.* = @intFromEnum(Filter.BandPass);
+            if (std.mem.startsWith(u8, value, @tagName(FilterType.BandPass))) {
+                out_value.* = @intFromEnum(FilterType.BandPass);
                 return true;
-            } else if (std.mem.startsWith(u8, value, @tagName(Filter.LowPass))) {
-                out_value.* = @intFromEnum(Filter.LowPass);
+            } else if (std.mem.startsWith(u8, value, @tagName(FilterType.LowPass))) {
+                out_value.* = @intFromEnum(FilterType.LowPass);
                 return true;
-            } else if (std.mem.startsWith(u8, value, @tagName(Filter.HighPass))) {
-                out_value.* = @intFromEnum(Filter.HighPass);
+            } else if (std.mem.startsWith(u8, value, @tagName(FilterType.HighPass))) {
+                out_value.* = @intFromEnum(FilterType.HighPass);
                 return true;
             }
             return false;
@@ -722,7 +718,7 @@ fn processEvent(plugin: *Plugin, event: *const clap.events.Header) bool {
             .Attack, .Decay, .Release, .Sustain, .Octave1, .Octave2, .Pitch1, .Pitch2, .Mix, .FilterFreq, .FilterQ => .{ .Float = param_event.value },
             // Cast the float as an int first, then cast as an enum
             .WaveShape1, .WaveShape2 => .{ .Wave = @as(Wave, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
-            .FilterType => .{ .Filter = @as(Filter, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
+            .FilterType => .{ .Filter = @as(FilterType, @enumFromInt(@as(usize, @intFromFloat(param_event.value)))) },
             .FilterEnable, .ScaleVoices, .DebugBool1, .DebugBool2 => .{ .Bool = if (param_event.value == 1.0) true else false },
         };
 
@@ -765,7 +761,7 @@ pub fn _flush(
     }
 
     if (params_did_change) {
-        std.log.debug("Parameters changed, updating voices and notifying host", .{});
+        std.log.debug("Parameters changed, updating voices and filter and notifying host", .{});
         for (plugin.voices.voices.items) |*voice| {
             voice.adsr.attack_time = plugin.params.get(Parameter.Attack).Float;
             voice.adsr.decay_time = plugin.params.get(Parameter.Decay).Float;
@@ -773,5 +769,15 @@ pub fn _flush(
             voice.adsr.original_sustain_value = plugin.params.get(Parameter.Sustain).Float;
         }
         _ = plugin.notifyHostParamsChanged();
+
+        const filter_type = plugin.params.get(.FilterType).Filter;
+        const q: f32 = @floatCast(plugin.params.get(.FilterQ).Float);
+        const sample_rate: f32 = @floatCast(plugin.sample_rate.?);
+        const cutoff_freq: f32 = @floatCast(plugin.params.get(.FilterFreq).Float);
+        plugin.filter_left.update(filter_type, cutoff_freq, sample_rate, q) catch |err| {
+            std.log.err("Unable to update filter parameters! {}", .{err});
+            return;
+        };
+        plugin.filter_right.update(filter_type, cutoff_freq, sample_rate, q) catch unreachable;
     }
 }

@@ -13,7 +13,6 @@ const waves = @import("waves.zig");
 
 const Wave = waves.Wave;
 const Parameter = Params.Parameter;
-const Filter = Params.Filter;
 const Voice = Voices.Voice;
 const Expression = Voices.Expression;
 
@@ -147,19 +146,6 @@ pub fn renderAudio(plugin: *Plugin, start: u32, end: u32, output_left: [*]f32, o
             ThreadPool._exec(&plugin.plugin, @intCast(i));
         }
     }
-
-    // Apply filtering if enabled
-    const zone_filtering = tracy.ZoneN(@src(), "Filtering");
-    defer zone_filtering.End();
-    const enable_filtering = plugin.params.get(.FilterEnable).Bool;
-    const filter_type = plugin.params.get(.FilterType).Filter;
-    const q: f32 = @floatCast(plugin.params.get(.FilterQ).Float);
-    if (enable_filtering) {
-        const sample_rate: f32 = @floatCast(plugin.sample_rate.?);
-        const cutoff_freq: f32 = @floatCast(plugin.params.get(.FilterFreq).Float);
-        filter(filter_type, output_left[start..end], sample_rate, cutoff_freq, q);
-        filter(filter_type, output_right[start..end], sample_rate, cutoff_freq, q);
-    }
 }
 
 pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
@@ -242,50 +228,4 @@ pub fn processVoice(plugin: *Plugin, voice_index: u32) !void {
         render_payload.output_left[index] += output_l;
         render_payload.output_right[index] += output_r;
     }
-}
-pub fn filter(filter_type: Filter, input_signal: []f32, sample_rate: f32, cutoff_freq: f32, q: f32) void {
-    _ = q;
-    switch (filter_type) {
-        .LowPass => {
-            // Use a moog ladder filter
-            // const f = 2.0 * cutoff_freq / sample_rate;
-            // const k = 4.0 * (1.0 - std.math.exp(-2.0 * std.math.pi * f));
-            // const p = 1.0 - k;
-            //
-            // var stage1: f32 = 0;
-            // var stage2: f32 = 0;
-            // var stage3: f32 = 0;
-            // var stage4: f32 = 0;
-            //
-            // for (input_signal, 0..) |input_sample, i| {
-            //     const input_with_feedback = input_sample - q * stage4;
-            //
-            //     stage1 = stage1 * p + k * input_with_feedback;
-            //     stage2 = stage2 * p + k * stage1;
-            //     stage3 = stage3 * p + k * stage2;
-            //     stage4 = stage4 * p + k * stage3;
-            //
-            //     input_signal[i] = stage4;
-            // }
-            for (input_signal, 0..) |input_sample, i| {
-                if (i == 0) continue;
-
-                const dt: f32 = 1.0 / sample_rate;
-                const rc: f32 = 1.0 / (2.0 * std.math.pi * cutoff_freq);
-                const alpha: f32 = dt / (rc + dt);
-                const prev_sample = input_signal[i - 1];
-
-                input_signal[i] = prev_sample + alpha * (input_sample - prev_sample);
-            }
-        },
-        else => {},
-    }
-}
-
-fn filterRC(sample_rate: f32, input_sample: f32, prev_sample: f32, cutoff_freq: f32) f32 {
-    const dt: f32 = 1.0 / sample_rate;
-    const rc: f32 = 1.0 / (2.0 * std.math.pi * cutoff_freq);
-    const alpha: f32 = dt / (rc + dt);
-
-    return prev_sample + alpha * (input_sample - prev_sample);
 }
